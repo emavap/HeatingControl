@@ -1,0 +1,99 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Heating Control Setup - Global Settings",
+        "description": "Configure global heating control settings",
+        "data": {
+          "gas_heater_entity": "Gas Heater Entity (optional)",
+          "device_tracker_1": "Primary Device Tracker (optional)",
+          "device_tracker_2": "Secondary Device Tracker (optional)",
+          "automatic_heating_enabled": "Enable Automatic Heating",
+          "only_scheduled_devices_active": "Only Scheduled Devices Active (devices not in any schedule remain off)"
+        }
+      },
+      "select_devices": {
+        "title": "Select Climate Devices",
+        "description": "{info}",
+        "data": {
+          "climate_devices": "Climate Devices to Manage"
+        }
+      },
+      "add_schedule": {
+        "title": "Add Schedules",
+        "description": "{schedules}\n\nWould you like to add a schedule?",
+        "data": {
+          "add_schedule": "Add a schedule"
+        }
+      },
+      "schedule_config": {
+        "title": "Configure Schedule",
+        "description": "{info}",
+        "data": {
+          "name": "Schedule Name",
+          "enabled": "Schedule Enabled",
+          "temperature": "Target Temperature",
+          "fan_mode": "Fan Mode",
+          "always_active": "Always Active (ignore time window)",
+          "start_time": "Start Time",
+          "end_time": "End Time",
+          "only_when_home": "Only Active When Someone is Home",
+          "use_gas_heater": "Use Gas Heater (instead of selected devices)",
+          "device_entities": "Devices for this Schedule (optional)"
+        }
+      }
+    },
+    "error": {
+      "unknown": "Unexpected error occurred",
+      "no_devices": "Please select at least one climate device"
+    },
+    "abort": {
+      "already_configured": "Heating Control is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Heating Control Options - Global Settings",
+        "description": "Update global heating control settings",
+        "data": {
+          "gas_heater_entity": "Gas Heater Entity (optional)",
+          "device_tracker_1": "Primary Device Tracker (optional)",
+          "device_tracker_2": "Secondary Device Tracker (optional)",
+          "automatic_heating_enabled": "Enable Automatic Heating",
+          "only_scheduled_devices_active": "Only Scheduled Devices Active (devices not in any schedule remain off)"
+        }
+      },
+      "select_devices": {
+        "title": "Select Climate Devices",
+        "description": "Select all climate devices you want to manage",
+        "data": {
+          "climate_devices": "Climate Devices to Manage"
+        }
+      },
+      "manage_schedules": {
+        "title": "Manage Schedules",
+        "description": "{schedules}\n\nWhat would you like to do?",
+        "data": {
+          "action": "Action"
+        }
+      },
+      "add_schedule": {
+        "title": "Add Schedule",
+        "description": "Configure a new schedule with time window and device assignment",
+        "data": {
+          "name": "Schedule Name",
+          "enabled": "Schedule Enabled",
+          "temperature": "Target Temperature",
+          "fan_mode": "Fan Mode",
+          "always_active": "Always Active (ignore time window)",
+          "start_time": "Start Time",
+          "end_time": "End Time",
+          "only_when_home": "Only Active When Someone is Home",
+          "use_gas_heater": "Use Gas Heater (instead of selected devices)",
+          "device_entities": "Devices for this Schedule (optional)"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,266 @@
+alias: Smart House Heating Control
+description: >-
+  Single automation — apply current window on any trigger (no scripts, no
+  retries)
+triggers:
+  - at: input_datetime.heating_morning_time
+    trigger: time
+  - at: input_datetime.heating_night_time
+    trigger: time
+  - at: input_datetime.bedroom_off_start
+    trigger: time
+  - at: input_datetime.bedroom_off_end
+    trigger: time
+  - entity_id:
+      - device_tracker.iphone16
+      - device_tracker.wendys_iphone16
+    trigger: state
+  - entity_id:
+      - input_boolean.automaticheating
+      - input_boolean.bedroom_daytime_off_enabled
+      - input_boolean.aircoheating
+      - input_number.heating_comfort_temperature
+      - input_number.heating_eco_temperature
+      - input_datetime.heating_morning_time
+      - input_datetime.heating_night_time
+      - input_datetime.bedroom_off_start
+      - input_datetime.bedroom_off_end
+    trigger: state
+conditions:
+  - condition: state
+    entity_id: input_boolean.automaticheating
+    state: "on"
+actions:
+  - choose:
+      - conditions:
+          - condition: state
+            entity_id: input_boolean.aircoheating
+            state: "off"
+        sequence:
+          - repeat:
+              for_each: "{{ all_aircos }}"
+              sequence:
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: >-
+                            {{ states(repeat.item) not in
+                            ['unknown','unavailable','None', None] }}
+                      sequence:
+                        - target:
+                            entity_id: "{{ repeat.item }}"
+                          data:
+                            hvac_mode: "off"
+                          action: climate.set_hvac_mode
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ both_away }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: state
+                    entity_id: input_boolean.aircoheating
+                    state: "on"
+                sequence:
+                  - repeat:
+                      for_each: "{{ all_aircos }}"
+                      sequence:
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: >-
+                                    {{ states(repeat.item) not in
+                                    ['unknown','unavailable','None', None] }}
+                              sequence:
+                                - target:
+                                    entity_id: "{{ repeat.item }}"
+                                  data:
+                                    hvac_mode: "off"
+                                  action: climate.set_hvac_mode
+            default:
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: >-
+                          {{ states(gas_heater_entity) not in
+                          ['unknown','unavailable','None', None] }}
+                    sequence:
+                      - target:
+                          entity_id: "{{ gas_heater_entity }}"
+                        data:
+                          hvac_mode: "off"
+                        action: climate.set_hvac_mode
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ not both_away }}"
+          - condition: state
+            entity_id: input_boolean.aircoheating
+            state: "on"
+        sequence:
+          - repeat:
+              for_each: "{{ other_aircos }}"
+              sequence:
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: >-
+                            {{ states(repeat.item) not in
+                            ['unknown','unavailable','None', None] }}
+                      sequence:
+                        - target:
+                            entity_id: "{{ repeat.item }}"
+                          data:
+                            hvac_mode: heat
+                          action: climate.set_hvac_mode
+                        - delay:
+                            seconds: "{{ settle_seconds }}"
+                        - target:
+                            entity_id: "{{ repeat.item }}"
+                          data:
+                            temperature: "{{ target_temp }}"
+                          action: climate.set_temperature
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: >-
+                                    {% set lst = state_attr(repeat.item,
+                                    'fan_modes') | default([], true) %} {{ lst
+                                    is iterable and ('{{ target_fan }}' in lst)
+                                    }}
+                              sequence:
+                                - target:
+                                    entity_id: "{{ repeat.item }}"
+                                  data:
+                                    fan_mode: "{{ target_fan }}"
+                                  action: climate.set_fan_mode
+                        - delay:
+                            seconds: "{{ final_settle }}"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ bedroom_off_active }}"
+                sequence:
+                  - repeat:
+                      for_each: "{{ bedroom_aircos }}"
+                      sequence:
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: >-
+                                    {{ states(repeat.item) not in
+                                    ['unknown','unavailable','None', None] }}
+                              sequence:
+                                - target:
+                                    entity_id: "{{ repeat.item }}"
+                                  data:
+                                    hvac_mode: "off"
+                                  action: climate.set_hvac_mode
+            default:
+              - repeat:
+                  for_each: "{{ bedroom_aircos }}"
+                  sequence:
+                    - choose:
+                        - conditions:
+                            - condition: template
+                              value_template: >-
+                                {{ states(repeat.item) not in
+                                ['unknown','unavailable','None', None] }}
+                          sequence:
+                            - target:
+                                entity_id: "{{ repeat.item }}"
+                              data:
+                                hvac_mode: heat
+                              action: climate.set_hvac_mode
+                            - delay:
+                                seconds: "{{ settle_seconds }}"
+                            - target:
+                                entity_id: "{{ repeat.item }}"
+                              data:
+                                temperature: "{{ target_temp }}"
+                              action: climate.set_temperature
+                            - choose:
+                                - conditions:
+                                    - condition: template
+                                      value_template: >-
+                                        {% set lst = state_attr(repeat.item,
+                                        'fan_modes') | default([], true) %} {{
+                                        lst is iterable and ('{{ target_fan }}'
+                                        in lst) }}
+                                  sequence:
+                                    - target:
+                                        entity_id: "{{ repeat.item }}"
+                                      data:
+                                        fan_mode: "{{ target_fan }}"
+                                      action: climate.set_fan_mode
+                            - delay:
+                                seconds: "{{ final_settle }}"
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ not both_away }}"
+          - condition: state
+            entity_id: input_boolean.aircoheating
+            state: "off"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ states(gas_heater_entity) not in
+                      ['unknown','unavailable','None', None] }}
+                sequence:
+                  - target:
+                      entity_id: "{{ gas_heater_entity }}"
+                    data:
+                      hvac_mode: heat
+                    action: climate.set_hvac_mode
+                  - delay:
+                      seconds: "{{ settle_seconds }}"
+                  - target:
+                      entity_id: "{{ gas_heater_entity }}"
+                    data:
+                      temperature: "{{ target_temp }}"
+                    action: climate.set_temperature
+                  - delay:
+                      seconds: "{{ final_settle }}"
+mode: restart
+variables:
+  gas_heater_entity: climate.thermostat_hc1
+  bedroom_aircos:
+    - climate.aircobedroom_8ac419_aircobedroom
+    - climate.aircobedroom2_aircobedroom2
+  other_aircos:
+    - climate.aircokitchen_aircokitchen
+    - climate.black_heater
+  all_aircos: "{{ bedroom_aircos + other_aircos }}"
+  settle_seconds: 5
+  final_settle: 2
+  now_hm: "{{ now().strftime('%H:%M') }}"
+  morning: "{{ states('input_datetime.heating_morning_time')[0:5] }}"
+  night: "{{ states('input_datetime.heating_night_time')[0:5] }}"
+  within_day: "{{ morning <= now_hm < night }}"
+  iphone_home: "{{ is_state('device_tracker.iphone16','home') }}"
+  wendy_home: "{{ is_state('device_tracker.wendys_iphone16','home') }}"
+  both_away: |-
+    {{ is_state('device_tracker.iphone16','not_home') and
+       is_state('device_tracker.wendys_iphone16','not_home') }}
+  comfort_temp: "{{ states('input_number.heating_comfort_temperature') | float(19) }}"
+  eco_temp: "{{ states('input_number.heating_eco_temperature')     | float(16) }}"
+  target_temp: "{{ comfort_temp if within_day else eco_temp }}"
+  target_fan: "{{ 'auto' if within_day else 'silent' }}"
+  bedroom_off_enabled: "{{ is_state('input_boolean.bedroom_daytime_off_enabled','on') }}"
+  off_start_hm: >-
+    {% set s = states('input_datetime.bedroom_off_start') %} {{ (s if s not in
+    ['unknown','unavailable','None',''] else '00:00')[0:5] }}
+  off_end_hm: >-
+    {% set e = states('input_datetime.bedroom_off_end') %} {{ (e if e not in
+    ['unknown','unavailable','None',''] else '00:00')[0:5] }}
+  zero_length_window: "{{ off_start_hm == off_end_hm }}"
+  spans_midnight: "{{ off_end_hm < off_start_hm }}"
+  time_in_window: >-
+    {% if zero_length_window %} false {% elif not spans_midnight %} {{
+    off_start_hm <= now_hm < off_end_hm }} {% else %} {{ (now_hm >=
+    off_start_hm) or (now_hm < off_end_hm) }} {% endif %}
+  bedroom_off_active: "{{ bedroom_off_enabled and time_in_window }}"

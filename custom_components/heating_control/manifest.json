@@ -1,0 +1,12 @@
+{
+  "domain": "heating_control",
+  "name": "Heating Control",
+  "codeowners": ["@marcocamilli"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/marcocamilli/HeatingControl",
+  "integration_type": "device",
+  "iot_class": "calculated",
+  "requirements": [],
+  "version": "1.0.0"
+}
