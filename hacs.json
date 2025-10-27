@@ -1,0 +1,5 @@
+{
+  "name": "Heating Control",
+  "content_in_root": false,
+  "filename": "custom_components/heating_control/manifest.json"
+}
