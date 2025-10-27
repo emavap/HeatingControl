@@ -50,8 +50,9 @@ def snapshot(
 
     diagnostics = DiagnosticsSnapshot(
         now_time="00:00",
-        tracker_1_home=anyone_home,
-        tracker_2_home=False,
+        tracker_states={"device_tracker.test": anyone_home},
+        trackers_home=int(anyone_home),
+        trackers_total=1,
         auto_heating_enabled=True,
         only_scheduled_active=True,
         schedule_count=len(schedule_states),

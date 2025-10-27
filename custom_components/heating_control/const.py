@@ -3,8 +3,7 @@
 DOMAIN = "heating_control"
 
 # Configuration keys - Global
-CONF_DEVICE_TRACKER_1 = "device_tracker_1"
-CONF_DEVICE_TRACKER_2 = "device_tracker_2"
+CONF_DEVICE_TRACKERS = "device_trackers"
 CONF_AUTO_HEATING_ENABLED = "automatic_heating_enabled"
 CONF_GAS_HEATER_ENTITY = "gas_heater_entity"
 CONF_ONLY_SCHEDULED_ACTIVE = "only_scheduled_devices_active"

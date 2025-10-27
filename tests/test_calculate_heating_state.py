@@ -7,8 +7,7 @@ import custom_components.heating_control.coordinator as coordinator_module
 from custom_components.heating_control.const import (
     CONF_AUTO_HEATING_ENABLED,
     CONF_CLIMATE_DEVICES,
-    CONF_DEVICE_TRACKER_1,
-    CONF_DEVICE_TRACKER_2,
+    CONF_DEVICE_TRACKERS,
     CONF_GAS_HEATER_ENTITY,
     CONF_ONLY_SCHEDULED_ACTIVE,
     CONF_SCHEDULES,
@@ -92,8 +91,7 @@ def test_schedule_activation_with_presence(monkeypatch, dummy_hass: DummyHass):
 
     config = {
         CONF_AUTO_HEATING_ENABLED: True,
-        CONF_DEVICE_TRACKER_1: "device_tracker.user1",
-        CONF_DEVICE_TRACKER_2: "device_tracker.user2",
+        CONF_DEVICE_TRACKERS: ["device_tracker.user1", "device_tracker.user2"],
         CONF_ONLY_SCHEDULED_ACTIVE: True,
         CONF_CLIMATE_DEVICES: ["climate.living_room", "climate.bedroom"],
         CONF_SCHEDULES: [
@@ -125,7 +123,7 @@ def test_only_scheduled_active_false_allows_defaults(monkeypatch, dummy_hass: Du
 
     config = {
         CONF_AUTO_HEATING_ENABLED: True,
-        CONF_DEVICE_TRACKER_1: "device_tracker.user1",
+        CONF_DEVICE_TRACKERS: ["device_tracker.user1"],
         CONF_ONLY_SCHEDULED_ACTIVE: False,
         CONF_CLIMATE_DEVICES: ["climate.office"],
         CONF_SCHEDULES: [],
@@ -145,7 +143,7 @@ def test_multiple_schedules_highest_temperature_wins(monkeypatch, dummy_hass: Du
 
     config = {
         CONF_AUTO_HEATING_ENABLED: True,
-        CONF_DEVICE_TRACKER_1: "device_tracker.user1",
+        CONF_DEVICE_TRACKERS: ["device_tracker.user1"],
         CONF_ONLY_SCHEDULED_ACTIVE: True,
         CONF_CLIMATE_DEVICES: ["climate.kitchen"],
         CONF_SCHEDULES: [
@@ -184,7 +182,7 @@ def test_gas_heater_activation_and_defaults(monkeypatch, dummy_hass: DummyHass):
 
     config = {
         CONF_AUTO_HEATING_ENABLED: True,
-        CONF_DEVICE_TRACKER_1: "device_tracker.user1",
+        CONF_DEVICE_TRACKERS: ["device_tracker.user1"],
         CONF_CLIMATE_DEVICES: ["climate.living_room"],
         CONF_GAS_HEATER_ENTITY: "climate.gas_heater",
         CONF_ONLY_SCHEDULED_ACTIVE: DEFAULT_ONLY_SCHEDULED_ACTIVE,
@@ -229,8 +227,7 @@ def test_schedule_requires_presence(monkeypatch, dummy_hass: DummyHass):
 
     config = {
         CONF_AUTO_HEATING_ENABLED: True,
-        CONF_DEVICE_TRACKER_1: "device_tracker.user1",
-        CONF_DEVICE_TRACKER_2: "device_tracker.user2",
+        CONF_DEVICE_TRACKERS: ["device_tracker.user1", "device_tracker.user2"],
         CONF_CLIMATE_DEVICES: ["climate.bedroom"],
         CONF_ONLY_SCHEDULED_ACTIVE: True,
         CONF_SCHEDULES: [
@@ -252,6 +249,35 @@ def test_schedule_requires_presence(monkeypatch, dummy_hass: DummyHass):
     assert result.anyone_home is False
     assert result.schedule_decisions["Afternoon"].is_active is False
     assert result.device_decisions["climate.bedroom"].should_be_active is False
+
+
+def test_multiple_trackers_presence_counts(monkeypatch, dummy_hass: DummyHass):
+    freeze_time(monkeypatch, 8, 0)
+    dummy_hass.states.set("device_tracker.user1", DummyState("home", {}))
+    dummy_hass.states.set("device_tracker.user2", DummyState("home", {}))
+    dummy_hass.states.set("device_tracker.user3", DummyState("not_home", {}))
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_DEVICE_TRACKERS: [
+            "device_tracker.user1",
+            "device_tracker.user2",
+            "device_tracker.user3",
+        ],
+        CONF_CLIMATE_DEVICES: ["climate.living_room"],
+        CONF_ONLY_SCHEDULED_ACTIVE: True,
+        CONF_SCHEDULES: [],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    assert result.anyone_home is True
+    assert result.both_away is False
+    diagnostics = result.diagnostics
+    assert diagnostics.trackers_home == 2
+    assert diagnostics.trackers_total == 3
+    assert diagnostics.tracker_states["device_tracker.user3"] is False
 
 
 def test_always_active_schedule_ignores_time(monkeypatch, dummy_hass: DummyHass):

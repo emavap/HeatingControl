@@ -14,8 +14,7 @@ from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
     DOMAIN,
-    CONF_DEVICE_TRACKER_1,
-    CONF_DEVICE_TRACKER_2,
+    CONF_DEVICE_TRACKERS,
     CONF_AUTO_HEATING_ENABLED,
     CONF_GAS_HEATER_ENTITY,
     CONF_ONLY_SCHEDULED_ACTIVE,
@@ -41,6 +40,15 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _extract_trackers(config: dict[str, Any] | None) -> list[str]:
+    """Return configured device trackers."""
+    if not config:
+        return []
+
+    trackers = config.get(CONF_DEVICE_TRACKERS, [])
+    return list(trackers)
+
+
 class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Heating Control."""
 
@@ -59,19 +67,24 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            self._global_config = user_input
+            self._global_config = {
+                **user_input,
+                CONF_DEVICE_TRACKERS: list(user_input.get(CONF_DEVICE_TRACKERS, [])),
+            }
             return await self.async_step_select_devices()
+
+        default_trackers = _extract_trackers(self._global_config)
 
         data_schema = vol.Schema(
             {
                 vol.Optional(CONF_GAS_HEATER_ENTITY): selector.EntitySelector(
                     selector.EntitySelectorConfig(domain="climate")
                 ),
-                vol.Optional(CONF_DEVICE_TRACKER_1): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="device_tracker")
-                ),
-                vol.Optional(CONF_DEVICE_TRACKER_2): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="device_tracker")
+                vol.Optional(
+                    CONF_DEVICE_TRACKERS,
+                    default=default_trackers,
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="device_tracker", multiple=True)
                 ),
                 vol.Required(CONF_AUTO_HEATING_ENABLED, default=True): selector.BooleanSelector(),
                 vol.Required(
@@ -244,10 +257,14 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options - global settings."""
         if user_input is not None:
-            self._global_config = user_input
+            self._global_config = {
+                **user_input,
+                CONF_DEVICE_TRACKERS: list(user_input.get(CONF_DEVICE_TRACKERS, [])),
+            }
             return await self.async_step_select_devices()
 
         current_config = self.config_entry.options or self.config_entry.data
+        default_trackers = _extract_trackers(current_config)
 
         data_schema = vol.Schema(
             {
@@ -258,16 +275,10 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                     selector.EntitySelectorConfig(domain="climate")
                 ),
                 vol.Optional(
-                    CONF_DEVICE_TRACKER_1,
-                    default=current_config.get(CONF_DEVICE_TRACKER_1)
+                    CONF_DEVICE_TRACKERS,
+                    default=default_trackers,
                 ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="device_tracker")
-                ),
-                vol.Optional(
-                    CONF_DEVICE_TRACKER_2,
-                    default=current_config.get(CONF_DEVICE_TRACKER_2)
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="device_tracker")
+                    selector.EntitySelectorConfig(domain="device_tracker", multiple=True)
                 ),
                 vol.Required(
                     CONF_AUTO_HEATING_ENABLED,

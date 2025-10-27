@@ -12,8 +12,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     CONF_AUTO_HEATING_ENABLED,
     CONF_CLIMATE_DEVICES,
-    CONF_DEVICE_TRACKER_1,
-    CONF_DEVICE_TRACKER_2,
+    CONF_DEVICE_TRACKERS,
     CONF_GAS_HEATER_ENTITY,
     CONF_ONLY_SCHEDULED_ACTIVE,
     CONF_SCHEDULES,
@@ -169,12 +168,8 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         now = datetime.now()
         now_hm = now.strftime("%H:%M")
 
-        (
-            tracker_1_home,
-            tracker_2_home,
-            anyone_home,
-            both_away,
-        ) = self._resolve_presence(config)
+        tracker_states, anyone_home, both_away = self._resolve_presence(config)
+        tracker_states = dict(tracker_states)
 
         auto_heating_enabled = config.get(CONF_AUTO_HEATING_ENABLED, True)
         only_scheduled_active = config.get(
@@ -202,8 +197,9 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
         diagnostics = DiagnosticsSnapshot(
             now_time=now_hm,
-            tracker_1_home=tracker_1_home,
-            tracker_2_home=tracker_2_home,
+            tracker_states=tracker_states,
+            trackers_home=sum(tracker_states.values()),
+            trackers_total=len(tracker_states),
             auto_heating_enabled=auto_heating_enabled,
             only_scheduled_active=only_scheduled_active,
             schedule_count=len(config.get(CONF_SCHEDULES, [])),
@@ -222,18 +218,18 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             diagnostics=diagnostics,
         )
 
-    def _resolve_presence(self, config) -> Tuple[bool, bool, bool, bool]:
+    def _resolve_presence(self, config) -> Tuple[Dict[str, bool], bool, bool]:
         """Determine presence based on configured device trackers."""
-        device_tracker_1 = config.get(CONF_DEVICE_TRACKER_1)
-        device_tracker_2 = config.get(CONF_DEVICE_TRACKER_2)
+        tracker_entities = list(config.get(CONF_DEVICE_TRACKERS, []))
 
-        tracker_1_home = self._is_tracker_home(device_tracker_1)
-        tracker_2_home = self._is_tracker_home(device_tracker_2)
+        tracker_states: Dict[str, bool] = {}
+        for tracker in tracker_entities:
+            tracker_states[tracker] = self._is_tracker_home(tracker)
 
-        anyone_home = tracker_1_home or tracker_2_home
+        anyone_home = any(tracker_states.values())
         both_away = not anyone_home
 
-        return tracker_1_home, tracker_2_home, anyone_home, both_away
+        return tracker_states, anyone_home, both_away
 
     def _is_tracker_home(self, entity_id: Optional[str]) -> bool:
         """Return True if the given tracker entity is in STATE_HOME."""

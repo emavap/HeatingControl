@@ -58,7 +58,7 @@ The integration uses a schedule-based model where you define time windows and as
 Configure settings that apply to all schedules:
 
 - **Gas Heater Entity**: Your gas heating thermostat (optional)
-- **Device Trackers**: Up to 2 device trackers for presence detection (optional)
+- **Device Trackers**: One or more device trackers for presence detection (optional)
 - **Automatic Heating**: Master enable/disable switch for automatic heating
 - **Only Scheduled Devices Active**: If enabled, devices not in any schedule remain off. If disabled, devices not in schedules will be on when someone is home (default: false)
 
@@ -496,6 +496,20 @@ docker run --rm heating-control-tests
 pip install -r requirements-test.txt
 pytest -q
 ```
+
+### Smart Heating Dashboard Strategy
+
+Heating Control ships with a Lovelace dashboard strategy that reads your integration configuration and automatically builds a "Smart Heating" view. To create it:
+
+1. Go to *Settings → Dashboards → Add Dashboard*.
+2. Choose **Strategy**, then select **Heating Control: Smart Heating**.
+3. (Optional) Provide an `entry_id` if you have multiple Heating Control entries; otherwise the first one is used.
+
+The generated view includes thermostat cards for every managed climate (and the optional gas heater), live schedule/device state, and a refresh button that requests a new coordinator update. It updates automatically as schedules or devices change.
+
+### Example Lovelace YAML
+
+Prefer manual control? The `examples/dashboards/smart_heating_dashboard.yaml` file mirrors the original sample layout. Copy it into a YAML dashboard and adjust the entity IDs for your environment.
 
 ### Project Structure
 

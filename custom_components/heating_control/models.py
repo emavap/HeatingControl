@@ -85,8 +85,9 @@ class DiagnosticsSnapshot:
     """Diagnostics information about the current coordinator decision state."""
 
     now_time: str
-    tracker_1_home: bool
-    tracker_2_home: bool
+    tracker_states: Mapping[str, bool]
+    trackers_home: int
+    trackers_total: int
     auto_heating_enabled: bool
     only_scheduled_active: bool
     schedule_count: int
@@ -97,8 +98,9 @@ class DiagnosticsSnapshot:
         """Return a dictionary representation used by diagnostics sensors."""
         return {
             "now_time": self.now_time,
-            "tracker_1_home": self.tracker_1_home,
-            "tracker_2_home": self.tracker_2_home,
+            "tracker_states": dict(self.tracker_states),
+            "trackers_home": self.trackers_home,
+            "trackers_total": self.trackers_total,
             "auto_heating_enabled": self.auto_heating_enabled,
             "only_scheduled_active": self.only_scheduled_active,
             "schedule_count": self.schedule_count,
