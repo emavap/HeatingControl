@@ -46,6 +46,11 @@ class HeatingControlCoordinator(DataUpdateCoordinator):
         self.hass = hass
         self._previous_state = {}
 
+        # Track previous schedule states to detect transitions
+        self._previous_schedule_states = {}  # schedule_id -> is_active
+        self._previous_presence_state = None  # anyone_home state
+        self._force_update = False  # Force update on config changes
+
         super().__init__(
             hass,
             _LOGGER,
@@ -59,8 +64,18 @@ class HeatingControlCoordinator(DataUpdateCoordinator):
             # Calculate heating decisions
             data = await self.hass.async_add_executor_job(self._calculate_heating_state)
 
-            # Apply control decisions to devices
-            await self._apply_control_decisions(data)
+            # Check if we need to apply control (only on state transitions)
+            should_apply_control = self._detect_state_transitions(data)
+
+            if should_apply_control:
+                _LOGGER.info("State transition detected, applying control decisions")
+                # Apply control decisions to devices
+                await self._apply_control_decisions(data)
+            else:
+                _LOGGER.debug("No state transitions, skipping control application (preserving manual changes)")
+
+            # Update previous states for next cycle
+            self._update_previous_states(data)
 
             return data
         except Exception as err:
@@ -178,6 +193,67 @@ class HeatingControlCoordinator(DataUpdateCoordinator):
 
         except Exception as err:
             _LOGGER.error(f"Error controlling {entity_id}: {err}")
+
+    def _detect_state_transitions(self, data: dict) -> bool:
+        """Detect if any schedule states or presence changed.
+
+        Returns True if control should be applied (state transition occurred).
+        Returns False if no transitions (preserve manual user changes).
+        """
+        # Force update if requested (e.g., config change)
+        if self._force_update:
+            _LOGGER.info("Forced update requested")
+            self._force_update = False
+            return True
+
+        # First run - no previous state
+        if self._previous_schedule_states is None or self._previous_presence_state is None:
+            _LOGGER.info("First run, applying initial state")
+            return True
+
+        # Check for presence changes
+        current_presence = data.get("anyone_home")
+        if current_presence != self._previous_presence_state:
+            _LOGGER.info(f"Presence changed: {self._previous_presence_state} -> {current_presence}")
+            return True
+
+        # Check for schedule state transitions
+        current_schedule_decisions = data.get("schedule_decisions", {})
+
+        for schedule_id, schedule_data in current_schedule_decisions.items():
+            current_active = schedule_data.get("is_active", False)
+            previous_active = self._previous_schedule_states.get(schedule_id, False)
+
+            if current_active != previous_active:
+                schedule_name = schedule_data.get("name", schedule_id)
+                _LOGGER.info(f"Schedule '{schedule_name}' state changed: {previous_active} -> {current_active}")
+                return True
+
+        # Check for schedules that were removed
+        for schedule_id in self._previous_schedule_states:
+            if schedule_id not in current_schedule_decisions:
+                _LOGGER.info(f"Schedule {schedule_id} was removed")
+                return True
+
+        # No transitions detected
+        return False
+
+    def _update_previous_states(self, data: dict) -> None:
+        """Update stored previous states for next cycle comparison."""
+        # Store current presence state
+        self._previous_presence_state = data.get("anyone_home")
+
+        # Store current schedule states
+        current_schedule_decisions = data.get("schedule_decisions", {})
+        self._previous_schedule_states = {
+            schedule_id: schedule_data.get("is_active", False)
+            for schedule_id, schedule_data in current_schedule_decisions.items()
+        }
+
+    def force_update_on_next_refresh(self) -> None:
+        """Force control application on next update (for config changes)."""
+        _LOGGER.info("Forcing update on next refresh")
+        self._force_update = True
 
     def _is_time_in_schedule(self, now_hm: str, start_hm: str, end_hm: str) -> bool:
         """Check if current time is within schedule."""
