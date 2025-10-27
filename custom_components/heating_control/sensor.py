@@ -72,28 +72,34 @@ class DecisionDiagnosticsSensor(HeatingControlSensor):
     @property
     def native_value(self) -> str:
         """Return the state."""
-        diagnostics = self.coordinator.data.get("diagnostics", {})
-        active_schedules = diagnostics.get("active_schedules", 0)
-        schedule_count = diagnostics.get("schedule_count", 0)
+        snapshot = self.coordinator.data
+        if not snapshot:
+            return "0/0 schedules active"
+
+        diagnostics = snapshot.diagnostics
+        active_schedules = diagnostics.active_schedules
+        schedule_count = diagnostics.schedule_count
         return f"{active_schedules}/{schedule_count} schedules active"
 
     @property
     def extra_state_attributes(self) -> dict[str, any]:
         """Return the diagnostics as attributes."""
-        data = self.coordinator.data
-        diagnostics = data.get("diagnostics", {})
+        snapshot = self.coordinator.data
+        if not snapshot:
+            return {}
 
-        # Add device summary
-        device_decisions = data.get("device_decisions", {})
-        active_devices = sum(1 for d in device_decisions.values() if d.get("should_be_active"))
+        diagnostics = snapshot.diagnostics.as_dict()
 
-        # Add schedule summary
-        schedule_decisions = data.get("schedule_decisions", {})
+        active_devices = sum(
+            1 for decision in snapshot.device_decisions.values() if decision.should_be_active
+        )
 
-        return {
-            **diagnostics,
-            "active_devices": active_devices,
-            "total_devices": len(device_decisions),
-            "both_away": data.get("both_away"),
-            "anyone_home": data.get("anyone_home"),
-        }
+        diagnostics.update(
+            {
+                "active_devices": active_devices,
+                "total_devices": len(snapshot.device_decisions),
+                "both_away": snapshot.both_away,
+                "anyone_home": snapshot.anyone_home,
+            }
+        )
+        return diagnostics

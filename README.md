@@ -198,17 +198,13 @@ Result:
 
 For each device and the gas heater:
 
-1. **Check if state change is needed**: Compare desired state with previous state
-2. **If state changed** (from OFF to ON, ON to OFF, or temperature/fan changed):
-   - **Turning ON**:
-     - Set HVAC mode to "heat"
-     - Wait 5 seconds (allows device to initialize)
-     - Set target temperature
-     - Set fan mode (if supported by device)
-     - Wait 2 seconds (final settling)
-   - **Turning OFF**:
-     - Set HVAC mode to "off"
-3. **Track the new state** to avoid redundant commands in next cycle
+1. **Resolve desired state**: Collect the target HVAC mode (on/off), temperature, and fan mode from the decision engine
+2. **Compare with last command**: The coordinator remembers the last HVAC/temperature/fan values it sent for each entity
+3. **Apply HVAC changes**: If the desired on/off state differs, send `set_hvac_mode` to toggle and wait 5 seconds for the device to settle
+4. **Apply setpoint changes**: Whenever the target temperature differs, send `set_temperature` even if the device was already on
+5. **Apply fan changes**: When the target fan mode differs and is supported by the device, send `set_fan_mode`
+6. **Final settle**: If the HVAC mode changed during this cycle, wait an additional 2 seconds before moving on
+7. **Store the command**: Record the values that were just sent so future cycles can skip redundant calls
 
 ### Why Highest Temperature Wins?
 
@@ -433,25 +429,23 @@ The integration **automatically controls** all configured climate devices every 
 
 ### What Happens Automatically
 
-1. **Schedule Evaluation**: All schedules are evaluated based on current time and presence
-2. **Device Control**: Climate devices are turned on/off based on active schedules
-3. **Temperature Setting**: Devices are set to the temperature from their active schedule(s) - highest wins if multiple
-4. **Fan Mode**: Fan mode from the schedule with highest temperature
-5. **Gas Heater**: Activated when any schedule with "use_gas_heater" is active, using the highest temperature from those schedules
+1. **Schedule Evaluation**: All schedules are evaluated based on current time and presence rules
+2. **Decision Building**: Target HVAC state, temperature, and fan mode are computed for every climate device (highest temperature wins) and the gas heater
+3. **Change Detection**: Decisions are compared against the last command sent to each entity to determine what actually needs to change
+4. **Command Dispatch**: HVAC mode, temperature, and fan commands are sent only where differences are detected, with settle delays when toggling HVAC state
+5. **Gas Heater Handling**: The gas heater is turned on when requested by a schedule and explicitly turned off when no schedule needs it
 
 ### Device Control Logic
 
-- **Turn ON**: When a schedule becomes active for a device
-  - Set HVAC mode to "heat"
-  - Wait 5 seconds for device to settle
-  - Set target temperature (from schedule, highest if multiple active schedules)
-  - Set fan mode (from schedule with highest temperature, if supported)
-  - Wait 2 seconds for final settling
+- **Turn ON**: When a decision requires the device to heat
+  - If the HVAC mode is not already `heat`, send `set_hvac_mode` and wait 5 seconds
+  - Apply the target temperature whenever it differs from the previous command
+  - Apply the fan mode when it differs and the device supports the requested mode
+  - If the HVAC mode changed in this cycle, wait an additional 2 seconds for a final settle
 
-- **Turn OFF**: When no active schedules need the device
-  - Set HVAC mode to "off"
+- **Turn OFF**: When no active decision needs the device, send `set_hvac_mode: off`
 
-- **State Tracking**: Integration only sends commands when state actually changes (avoids unnecessary calls)
+- **State Tracking**: The coordinator records the last HVAC, temperature, and fan command per entity so the next cycle can skip redundant calls while still reacting to setpoint or fan changes
 
 ### Monitoring with Binary Sensors
 
@@ -489,16 +483,27 @@ automation:
 
 ### Running Tests
 
+**Docker (recommended)**
+
 ```bash
-cd tests
-pytest
+docker build -t heating-control-tests .
+docker run --rm heating-control-tests
+```
+
+**Local environment**
+
+```bash
+pip install -r requirements-test.txt
+pytest -q
 ```
 
 ### Project Structure
 
 - `__init__.py` - Integration setup and entry point
 - `config_flow.py` - Multi-step UI configuration wizard (global settings → devices → schedules)
-- `coordinator.py` - Schedule evaluation and decision logic
+- `coordinator.py` - Coordinates schedule evaluation and orchestrates control flow
+- `models.py` - Dataclasses describing schedule/device/gas-heater decisions and diagnostics
+- `controller.py` - Encapsulates climate service calls and device command history
 - `binary_sensor.py` - Binary sensor entities (schedule, device, gas heater sensors)
 - `sensor.py` - Regular sensor entities for diagnostics
 - `const.py` - Constants and configuration keys

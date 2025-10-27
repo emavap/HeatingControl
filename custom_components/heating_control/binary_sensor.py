@@ -32,13 +32,10 @@ async def async_setup_entry(
 
     # Add per-schedule binary sensors
     if coordinator.data:
-        schedule_decisions = coordinator.data.get("schedule_decisions", {})
-        for schedule_id, schedule_data in schedule_decisions.items():
+        for schedule_id in coordinator.data.schedule_decisions:
             entities.append(ScheduleActiveBinarySensor(coordinator, entry, schedule_id))
 
-        # Add per-device binary sensors
-        device_decisions = coordinator.data.get("device_decisions", {})
-        for entity_id in device_decisions.keys():
+        for entity_id in coordinator.data.device_decisions:
             entities.append(DeviceActiveBinarySensor(coordinator, entry, entity_id))
 
     async_add_entities(entities)
@@ -83,7 +80,8 @@ class BothAwayBinarySensor(HeatingControlBinarySensor):
     @property
     def is_on(self) -> bool:
         """Return true if both residents are away."""
-        return self.coordinator.data.get("both_away", False)
+        snapshot = self.coordinator.data
+        return bool(snapshot and snapshot.both_away)
 
 
 class GasHeaterBinarySensor(CoordinatorEntity, BinarySensorEntity):
@@ -103,19 +101,24 @@ class GasHeaterBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         """Return true if gas heater should be active."""
-        gas_heater_decision = self.coordinator.data.get("gas_heater_decision", {})
-        return gas_heater_decision.get("should_be_active", False)
+        snapshot = self.coordinator.data
+        if not snapshot or not snapshot.gas_heater_decision:
+            return False
+        return snapshot.gas_heater_decision.should_be_active
 
     @property
     def extra_state_attributes(self) -> dict[str, any]:
         """Return additional attributes."""
-        gas_heater_decision = self.coordinator.data.get("gas_heater_decision", {})
+        snapshot = self.coordinator.data
+        decision = snapshot.gas_heater_decision if snapshot else None
+        if not decision:
+            return {}
 
         return {
-            "entity_id": gas_heater_decision.get("entity_id"),
-            "target_temp": gas_heater_decision.get("target_temp"),
-            "target_fan": gas_heater_decision.get("target_fan"),
-            "active_schedules": gas_heater_decision.get("active_schedules", []),
+            "entity_id": decision.entity_id,
+            "target_temp": decision.target_temp,
+            "target_fan": decision.target_fan,
+            "active_schedules": list(decision.active_schedules),
         }
 
 
@@ -131,8 +134,10 @@ class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._entry_id = entry.entry_id
 
         # Get schedule info from coordinator data
-        schedule_data = coordinator.data.get("schedule_decisions", {}).get(schedule_id, {})
-        schedule_name = schedule_data.get("name", "Unknown Schedule")
+        schedule = None
+        if coordinator.data:
+            schedule = coordinator.data.schedule_decisions.get(schedule_id)
+        schedule_name = schedule.name if schedule else "Unknown Schedule"
 
         self._attr_unique_id = f"{entry.entry_id}_schedule_{schedule_id}"
         self._attr_name = f"Heating Schedule {schedule_name}"
@@ -142,24 +147,29 @@ class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         """Return true if schedule is currently active."""
-        schedule_decisions = self.coordinator.data.get("schedule_decisions", {})
-        schedule_data = schedule_decisions.get(self._schedule_id, {})
-        return schedule_data.get("is_active", False)
+        snapshot = self.coordinator.data
+        if not snapshot:
+            return False
+        schedule = snapshot.schedule_decisions.get(self._schedule_id)
+        return bool(schedule and schedule.is_active)
 
     @property
     def extra_state_attributes(self) -> dict[str, any]:
         """Return additional attributes."""
-        schedule_decisions = self.coordinator.data.get("schedule_decisions", {})
-        schedule_data = schedule_decisions.get(self._schedule_id, {})
+        snapshot = self.coordinator.data
+        schedule = snapshot.schedule_decisions.get(self._schedule_id) if snapshot else None
+        if not schedule:
+            return {}
+
         return {
-            "schedule_name": schedule_data.get("name"),
-            "in_time_window": schedule_data.get("in_time_window"),
-            "presence_ok": schedule_data.get("presence_ok"),
-            "use_gas_heater": schedule_data.get("use_gas_heater"),
-            "device_count": schedule_data.get("device_count"),
-            "devices": schedule_data.get("devices", []),
-            "target_temp": schedule_data.get("target_temp"),
-            "target_fan": schedule_data.get("target_fan"),
+            "schedule_name": schedule.name,
+            "in_time_window": schedule.in_time_window,
+            "presence_ok": schedule.presence_ok,
+            "use_gas_heater": schedule.use_gas_heater,
+            "device_count": schedule.device_count,
+            "devices": list(schedule.devices),
+            "target_temp": schedule.target_temp,
+            "target_fan": schedule.target_fan,
         }
 
 
@@ -184,19 +194,26 @@ class DeviceActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         """Return true if device should be active."""
-        device_decisions = self.coordinator.data.get("device_decisions", {})
-        device_data = device_decisions.get(self._device_entity, {})
-        return device_data.get("should_be_active", False)
+        snapshot = self.coordinator.data
+        if not snapshot:
+            return False
+
+        device = snapshot.device_decisions.get(self._device_entity)
+        return bool(device and device.should_be_active)
 
     @property
     def extra_state_attributes(self) -> dict[str, any]:
         """Return additional attributes."""
-        device_decisions = self.coordinator.data.get("device_decisions", {})
-        device_data = device_decisions.get(self._device_entity, {})
+        snapshot = self.coordinator.data
+        device = snapshot.device_decisions.get(self._device_entity) if snapshot else None
+        if not device:
+            return {}
+
+        active_schedules = list(device.active_schedules)
         return {
-            "entity_id": device_data.get("entity_id"),
-            "active_schedules": device_data.get("active_schedules", []),
-            "schedule_count": len(device_data.get("active_schedules", [])),
-            "target_temp": device_data.get("target_temp"),
-            "target_fan": device_data.get("target_fan"),
+            "entity_id": device.entity_id,
+            "active_schedules": active_schedules,
+            "schedule_count": len(active_schedules),
+            "target_temp": device.target_temp,
+            "target_fan": device.target_fan,
         }
