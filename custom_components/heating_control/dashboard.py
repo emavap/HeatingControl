@@ -12,6 +12,7 @@ from .const import (
     CONF_DEVICE_TRACKERS,
     CONF_GAS_HEATER_ENTITY,
     DOMAIN,
+    SCHEDULE_SWITCH_ENTITY_TEMPLATE,
 )
 
 
@@ -50,7 +51,7 @@ class HeatingControlDashboardStrategy(Strategy):
         )
 
         status_cards = self._build_status_cards(
-            snapshot, climate_entities, gas_heater, tracker_entities
+            entry_id, snapshot, climate_entities, gas_heater, tracker_entities
         )
 
         sections: List[Dict[str, Any]] = []
@@ -176,6 +177,7 @@ class HeatingControlDashboardStrategy(Strategy):
 
     def _build_status_cards(
         self,
+        entry_id: str,
         snapshot,
         climate_entities: Sequence[str],
         gas_heater: Optional[str],
@@ -212,20 +214,20 @@ class HeatingControlDashboardStrategy(Strategy):
         )
 
         if snapshot:
-            schedule_entities = [
-                {
-                    "entity": self._schedule_binary_entity(decision.name),
-                    "name": decision.name,
-                }
-                for decision in snapshot.schedule_decisions.values()
-            ]
-            if schedule_entities:
-                cards.append(
-                    {
-                        "type": "entities",
-                        "title": "Schedules",
-                        "entities": schedule_entities,
-                    }
+            schedule_cards = self._build_schedule_cards(entry_id, snapshot)
+            if schedule_cards:
+                cards.extend(
+                    self._wrap_with_heading(
+                        "Schedules",
+                        [
+                            {
+                                "type": "grid",
+                                "columns": 2,
+                                "square": False,
+                                "cards": schedule_cards,
+                            }
+                        ],
+                    )
                 )
 
             device_entities = [
@@ -277,10 +279,94 @@ class HeatingControlDashboardStrategy(Strategy):
 
         return cards
 
+    def _build_schedule_cards(
+        self, entry_id: str, snapshot
+    ) -> List[Dict[str, Any]]:
+        """Build interactive cards for each configured schedule."""
+        if not snapshot or not snapshot.schedule_decisions:
+            return []
+
+        cards: List[Dict[str, Any]] = []
+
+        for decision in snapshot.schedule_decisions.values():
+            switch_entity = self._schedule_switch_entity(entry_id, decision.schedule_id)
+            label = self._format_schedule_label(decision)
+
+            if decision.is_active:
+                icon = "mdi:calendar-star"
+                icon_color = "green"
+                badge = "Active"
+                badge_icon = "mdi:fire"
+                badge_color = "green"
+            elif not decision.enabled:
+                icon = "mdi:calendar-remove"
+                icon_color = "grey"
+                badge = "Disabled"
+                badge_icon = "mdi:cancel"
+                badge_color = "grey"
+            else:
+                icon = "mdi:calendar-clock"
+                icon_color = "var(--primary-color)"
+                badge = "Idle"
+                badge_icon = "mdi:clock-outline"
+                badge_color = "var(--primary-color)"
+
+            cards.append(
+                {
+                    "type": "button",
+                    "entity": switch_entity,
+                    "name": decision.name,
+                    "icon": icon,
+                    "icon_color": icon_color,
+                    "badge": badge,
+                    "badge_icon": badge_icon,
+                    "badge_color": badge_color,
+                    "show_state": False,
+                    "label": label,
+                    "tap_action": {"action": "toggle"},
+                    "hold_action": {
+                        "action": "more-info",
+                        "entity": self._schedule_binary_entity(decision.name),
+                    },
+                }
+            )
+
+        return cards
+
     @staticmethod
     def _schedule_binary_entity(schedule_name: str) -> str:
         """Return the binary sensor entity id for a schedule."""
         return f"binary_sensor.{slugify(f'Heating Schedule {schedule_name}')}"
+
+    @staticmethod
+    def _schedule_switch_entity(entry_id: str, schedule_id: str) -> str:
+        """Return the switch entity id for toggling a schedule."""
+        return SCHEDULE_SWITCH_ENTITY_TEMPLATE.format(
+            entry=slugify(entry_id),
+            schedule=slugify(schedule_id),
+        )
+
+    @staticmethod
+    def _format_schedule_label(decision) -> str:
+        """Return a descriptive label for a schedule card."""
+        parts: List[str] = []
+
+        if decision.always_active:
+            parts.append("Always active")
+        else:
+            parts.append(f"{decision.start_time} → {decision.end_time}")
+
+        if decision.only_when_home:
+            parts.append("Home required")
+
+        if decision.use_gas_heater:
+            parts.append("Gas heater")
+
+        if decision.device_count:
+            device_suffix = "device" if decision.device_count == 1 else "devices"
+            parts.append(f"{decision.device_count} {device_suffix}")
+
+        return " • ".join(parts)
 
     @staticmethod
     def _device_binary_entity(climate_entity: str) -> str:

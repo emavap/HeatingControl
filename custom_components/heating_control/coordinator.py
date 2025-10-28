@@ -1,6 +1,7 @@
 """DataUpdateCoordinator for heating_control."""
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta
 import logging
 from typing import Dict, List, Optional, Tuple
@@ -21,6 +22,7 @@ from .const import (
     CONF_SCHEDULE_ENABLED,
     CONF_SCHEDULE_END,
     CONF_SCHEDULE_FAN_MODE,
+    CONF_SCHEDULE_ID,
     CONF_SCHEDULE_NAME,
     CONF_SCHEDULE_ONLY_WHEN_HOME,
     CONF_SCHEDULE_START,
@@ -263,7 +265,10 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         gas_heater_sources: List[Dict[str, object]] = []
 
         for schedule in schedules:
-            schedule_id = schedule.get("id") or schedule.get(CONF_SCHEDULE_NAME, "unnamed")
+            schedule_id = (
+                schedule.get(CONF_SCHEDULE_ID)
+                or schedule.get(CONF_SCHEDULE_NAME, "unnamed")
+            )
             schedule_name = schedule.get(CONF_SCHEDULE_NAME, "Unnamed")
             enabled = schedule.get(CONF_SCHEDULE_ENABLED, True)
             always_active = schedule.get(CONF_SCHEDULE_ALWAYS_ACTIVE, False)
@@ -290,6 +295,10 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             schedule_decisions[schedule_id] = ScheduleDecision(
                 schedule_id=schedule_id,
                 name=schedule_name,
+                start_time=start_time,
+                end_time=end_time,
+                always_active=always_active,
+                only_when_home=only_when_home,
                 enabled=enabled,
                 is_active=is_active,
                 in_time_window=in_time_window,
@@ -406,3 +415,81 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             target_fan=target_fan,
             active_schedules=tuple(active_schedule_names),
         )
+
+    async def async_set_schedule_enabled(
+        self,
+        *,
+        schedule_id: Optional[str] = None,
+        schedule_name: Optional[str] = None,
+        enabled: bool,
+    ) -> bool:
+        """Enable or disable a schedule and persist the change."""
+        config_entry = self.config_entry
+        source = config_entry.options or config_entry.data
+        schedules = source.get(CONF_SCHEDULES, [])
+
+        if not schedules:
+            raise ValueError("No schedules are configured for this entry")
+
+        new_schedules = deepcopy(schedules)
+        target_name = schedule_name.casefold() if schedule_name else None
+        target_id_casefold = schedule_id.casefold() if schedule_id else None
+        updated = False
+        matched = False
+
+        for schedule in new_schedules:
+            current_id = schedule.get(CONF_SCHEDULE_ID)
+            current_name = schedule.get(CONF_SCHEDULE_NAME, "")
+
+            id_matches = False
+            if schedule_id:
+                if current_id == schedule_id:
+                    id_matches = True
+                elif not current_id and current_name.casefold() == target_id_casefold:
+                    id_matches = True
+
+            name_matches = (
+                target_name is not None and current_name.casefold() == target_name
+            )
+
+            if not id_matches and not name_matches:
+                continue
+
+            matched = True
+
+            if schedule.get(CONF_SCHEDULE_ENABLED, True) == enabled:
+                break
+
+            schedule[CONF_SCHEDULE_ENABLED] = enabled
+            updated = True
+            break
+
+        if not matched:
+            identifier = schedule_id or schedule_name or "unknown"
+            raise ValueError(f"Schedule '{identifier}' was not found")
+
+        if not updated:
+            _LOGGER.debug(
+                "Schedule %s already %s",
+                schedule_id or schedule_name,
+                "enabled" if enabled else "disabled",
+            )
+            return False
+
+        update_kwargs: Dict[str, Dict] = {}
+        if config_entry.options:
+            new_options = dict(config_entry.options)
+            new_options[CONF_SCHEDULES] = new_schedules
+            update_kwargs["options"] = new_options
+        else:
+            new_data = dict(config_entry.data)
+            new_data[CONF_SCHEDULES] = new_schedules
+            update_kwargs["data"] = new_data
+
+        await self.hass.config_entries.async_update_entry(
+            config_entry, **update_kwargs
+        )
+
+        # Ensure the new configuration is applied promptly.
+        self._force_update = True
+        return True

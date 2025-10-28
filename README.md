@@ -497,15 +497,40 @@ pip install -r requirements-test.txt
 pytest -q
 ```
 
-### Smart Heating Dashboard Strategy
+### Smart Heating Dashboard
 
-Heating Control ships with a Lovelace dashboard strategy that reads your integration configuration and automatically builds a "Smart Heating" view. To create it:
+Heating Control **automatically creates** a dashboard when you install the integration. The dashboard appears in your Home Assistant sidebar as **"Smart Heating"** (🌡️ icon) and provides instant access to your heating controls.
 
-1. Go to *Settings → Dashboards → Add Dashboard*.
-2. Choose **Strategy**, then select **Heating Control: Smart Heating**.
-3. (Optional) Provide an `entry_id` if you have multiple Heating Control entries; otherwise the first one is used.
+#### What's Included
 
-The generated view includes thermostat cards for every managed climate (and the optional gas heater), live schedule/device state, and a refresh button that requests a new coordinator update. It updates automatically as schedules or devices change.
+The auto-generated dashboard includes:
+- **Thermostat Cards**: For every managed climate device (and the optional gas heater)
+- **Schedule Grid**: Toggle schedules on/off, see which are active
+- **Live Status**: Real-time device states and diagnostics
+- **Refresh Button**: Manually trigger coordinator updates
+- **Auto-Updates**: Reflects changes when you modify schedules or devices
+
+#### Finding Your Dashboard
+
+After installation:
+1. Look in your sidebar for **"Smart Heating"** (🌡️ icon)
+2. Click to view your heating dashboard
+3. Dashboard updates automatically as your config changes
+
+#### If You Deleted the Dashboard
+
+No problem! You can recreate it manually:
+
+1. Go to *Settings → Dashboards → Add Dashboard*
+2. Choose **Strategy**
+3. Select **Heating Control: Smart Heating**
+4. (Optional) Provide an `entry_id` if you have multiple Heating Control entries
+
+The dashboard will regenerate based on your current configuration.
+
+### Services
+
+Heating Control exposes the `heating_control.set_schedule_enabled` service so automations and dashboards can enable or disable schedules programmatically. Provide either a `schedule_id` (preferred) or `schedule_name`, plus an optional `entry_id` when multiple integration instances exist.
 
 ### Example Lovelace YAML
 
@@ -519,6 +544,7 @@ Prefer manual control? The `examples/dashboards/smart_heating_dashboard.yaml` fi
 - `models.py` - Dataclasses describing schedule/device/gas-heater decisions and diagnostics
 - `controller.py` - Encapsulates climate service calls and device command history
 - `binary_sensor.py` - Binary sensor entities (schedule, device, gas heater sensors)
+- `switch.py` - Schedule enable/disable switches
 - `sensor.py` - Regular sensor entities for diagnostics
 - `const.py` - Constants and configuration keys
 - `manifest.json` - Integration metadata

@@ -162,7 +162,13 @@ class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
             return {}
 
         return {
+            "schedule_id": schedule.schedule_id,
             "schedule_name": schedule.name,
+            "enabled": schedule.enabled,
+            "start_time": schedule.start_time,
+            "end_time": schedule.end_time,
+            "always_active": schedule.always_active,
+            "only_when_home": schedule.only_when_home,
             "in_time_window": schedule.in_time_window,
             "presence_ok": schedule.presence_ok,
             "use_gas_heater": schedule.use_gas_heater,

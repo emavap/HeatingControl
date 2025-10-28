@@ -11,6 +11,10 @@ class ScheduleDecision:
 
     schedule_id: str
     name: str
+    start_time: str
+    end_time: str
+    always_active: bool
+    only_when_home: bool
     enabled: bool
     is_active: bool
     in_time_window: bool
@@ -26,6 +30,10 @@ class ScheduleDecision:
         return {
             "schedule_id": self.schedule_id,
             "name": self.name,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "always_active": self.always_active,
+            "only_when_home": self.only_when_home,
             "enabled": self.enabled,
             "is_active": self.is_active,
             "in_time_window": self.in_time_window,

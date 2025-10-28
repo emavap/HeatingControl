@@ -41,3 +41,20 @@ SENSOR_DECISION_DIAGNOSTICS = "decision_diagnostics"
 
 # Update interval (seconds)
 UPDATE_INTERVAL = 60
+
+# Services
+SERVICE_SET_SCHEDULE_ENABLED = "set_schedule_enabled"
+
+# Service attributes
+ATTR_ENTRY_ID = "entry_id"
+ATTR_SCHEDULE_ID = "schedule_id"
+ATTR_SCHEDULE_NAME = "schedule_name"
+
+# Entity naming
+SCHEDULE_SWITCH_ENTITY_TEMPLATE = "switch.heating_schedule_{entry}_{schedule}_enabled"
+
+# Dashboard
+DASHBOARD_TITLE = "Smart Heating"
+DASHBOARD_ICON = "mdi:thermostat"
+DASHBOARD_URL_PATH_TEMPLATE = "heating-control-{entry_id}"
+DASHBOARD_CREATED_KEY = "dashboard_url"

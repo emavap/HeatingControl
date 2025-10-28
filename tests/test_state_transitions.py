@@ -35,6 +35,10 @@ def snapshot(
         schedule_id: ScheduleDecision(
             schedule_id=schedule_id,
             name=schedule_id.title(),
+            start_time="00:00",
+            end_time="23:59",
+            always_active=False,
+            only_when_home=True,
             enabled=True,
             is_active=is_active,
             in_time_window=True,
