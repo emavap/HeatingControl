@@ -25,8 +25,8 @@ views:
                 entity: climate.living_room_airco
                 name: Living Room Airco
               - type: thermostat
-                entity: climate.gas_heater
-                name: Gas Thermostat
+                entity: climate.kitchen_airco
+                name: Kitchen Airco
               - type: thermostat
                 entity: climate.bedroom_airco
                 name: Bedroom Airco

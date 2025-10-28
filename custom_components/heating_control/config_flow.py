@@ -16,7 +16,6 @@ from .const import (
     DOMAIN,
     CONF_DEVICE_TRACKERS,
     CONF_AUTO_HEATING_ENABLED,
-    CONF_GAS_HEATER_ENTITY,
     CONF_ONLY_SCHEDULED_ACTIVE,
     CONF_SCHEDULES,
     CONF_SCHEDULE_ID,
@@ -24,9 +23,7 @@ from .const import (
     CONF_SCHEDULE_ENABLED,
     CONF_SCHEDULE_START,
     CONF_SCHEDULE_END,
-    CONF_SCHEDULE_ALWAYS_ACTIVE,
     CONF_SCHEDULE_ONLY_WHEN_HOME,
-    CONF_SCHEDULE_USE_GAS,
     CONF_SCHEDULE_DEVICES,
     CONF_SCHEDULE_TEMPERATURE,
     CONF_SCHEDULE_FAN_MODE,
@@ -81,9 +78,6 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         data_schema = vol.Schema(
             {
-                vol.Optional(CONF_GAS_HEATER_ENTITY): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="climate")
-                ),
                 vol.Optional(
                     CONF_DEVICE_TRACKERS,
                     default=default_trackers,
@@ -165,11 +159,11 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             for schedule in self._pending_schedules:
                 name = schedule.get(CONF_SCHEDULE_NAME, "Unnamed")
                 start = schedule.get(CONF_SCHEDULE_START, "")
-                end = schedule.get(CONF_SCHEDULE_END, "")
                 device_count = len(schedule.get(CONF_SCHEDULE_DEVICES, []))
-                use_gas = schedule.get(CONF_SCHEDULE_USE_GAS, False)
-                gas_info = " (uses gas heater)" if use_gas else ""
-                description += f"- {name} ({start} - {end}): {device_count} devices{gas_info}\n"
+                description += (
+                    f"- {name} (starts {start}, auto end): "
+                    f"{device_count} devices\n"
+                )
 
         return self.async_show_form(
             step_id="add_schedule",
@@ -190,10 +184,7 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_SCHEDULE_NAME: user_input[CONF_SCHEDULE_NAME],
                 CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
                 CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
-                CONF_SCHEDULE_END: user_input.get(CONF_SCHEDULE_END, DEFAULT_SCHEDULE_END),
-                CONF_SCHEDULE_ALWAYS_ACTIVE: user_input.get(CONF_SCHEDULE_ALWAYS_ACTIVE, False),
                 CONF_SCHEDULE_ONLY_WHEN_HOME: user_input.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True),
-                CONF_SCHEDULE_USE_GAS: user_input.get(CONF_SCHEDULE_USE_GAS, False),
                 CONF_SCHEDULE_DEVICES: user_input.get(CONF_SCHEDULE_DEVICES, []),
                 CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
                 CONF_SCHEDULE_FAN_MODE: user_input.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE),
@@ -212,11 +203,8 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.NumberSelectorConfig(min=10, max=30, step=0.5, unit_of_measurement="°C")
                 ),
                 vol.Required(CONF_SCHEDULE_FAN_MODE, default=DEFAULT_SCHEDULE_FAN_MODE): selector.TextSelector(),
-                vol.Required(CONF_SCHEDULE_ALWAYS_ACTIVE, default=False): selector.BooleanSelector(),
                 vol.Optional(CONF_SCHEDULE_START, default=DEFAULT_SCHEDULE_START): selector.TimeSelector(),
-                vol.Optional(CONF_SCHEDULE_END, default=DEFAULT_SCHEDULE_END): selector.TimeSelector(),
                 vol.Required(CONF_SCHEDULE_ONLY_WHEN_HOME, default=True): selector.BooleanSelector(),
-                vol.Required(CONF_SCHEDULE_USE_GAS, default=False): selector.BooleanSelector(),
                 vol.Optional(CONF_SCHEDULE_DEVICES, default=[]): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=device_options,
@@ -232,8 +220,8 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
             errors=errors,
             description_placeholders={
-                "info": "Configure a schedule with time window and device assignment. "
-                        "If 'Use Gas Heater' is enabled, the gas heater will be used instead of the selected devices."
+                "info": "Configure a schedule with a start time; it will stay active until another schedule begins. "
+                        "Assign any climate devices that should follow this schedule."
             }
         )
 
@@ -266,8 +254,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         return [
             {
                 "label": f"{idx + 1}. {schedule.get(CONF_SCHEDULE_NAME, 'Unnamed')} "
-                         f"({schedule.get(CONF_SCHEDULE_START, '')} - "
-                         f"{schedule.get(CONF_SCHEDULE_END, '')})",
+                         f"(starts {schedule.get(CONF_SCHEDULE_START, '')})",
                 "value": str(idx)
             }
             for idx, schedule in enumerate(self._pending_schedules)
@@ -289,12 +276,6 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
 
         data_schema = vol.Schema(
             {
-                vol.Optional(
-                    CONF_GAS_HEATER_ENTITY,
-                    default=current_config.get(CONF_GAS_HEATER_ENTITY)
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="climate")
-                ),
                 vol.Optional(
                     CONF_DEVICE_TRACKERS,
                     default=default_trackers,
@@ -368,11 +349,11 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
             for idx, schedule in enumerate(self._pending_schedules):
                 name = schedule.get(CONF_SCHEDULE_NAME, "Unnamed")
                 start = schedule.get(CONF_SCHEDULE_START, "")
-                end = schedule.get(CONF_SCHEDULE_END, "")
                 device_count = len(schedule.get(CONF_SCHEDULE_DEVICES, []))
-                use_gas = schedule.get(CONF_SCHEDULE_USE_GAS, False)
-                gas_info = " (uses gas heater)" if use_gas else ""
-                schedule_list += f"{idx + 1}. {name} ({start} - {end}): {device_count} devices{gas_info}\n"
+                schedule_list += (
+                    f"{idx + 1}. {name} (starts {start}, auto end): "
+                    f"{device_count} devices\n"
+                )
         else:
             schedule_list = "No schedules configured yet.\n\n"
 
@@ -412,10 +393,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                 CONF_SCHEDULE_NAME: user_input[CONF_SCHEDULE_NAME],
                 CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
                 CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
-                CONF_SCHEDULE_END: user_input.get(CONF_SCHEDULE_END, DEFAULT_SCHEDULE_END),
-                CONF_SCHEDULE_ALWAYS_ACTIVE: user_input.get(CONF_SCHEDULE_ALWAYS_ACTIVE, False),
                 CONF_SCHEDULE_ONLY_WHEN_HOME: user_input.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True),
-                CONF_SCHEDULE_USE_GAS: user_input.get(CONF_SCHEDULE_USE_GAS, False),
                 CONF_SCHEDULE_DEVICES: user_input.get(CONF_SCHEDULE_DEVICES, []),
                 CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
                 CONF_SCHEDULE_FAN_MODE: user_input.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE),
@@ -433,11 +411,8 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                     selector.NumberSelectorConfig(min=10, max=30, step=0.5, unit_of_measurement="°C")
                 ),
                 vol.Required(CONF_SCHEDULE_FAN_MODE, default=DEFAULT_SCHEDULE_FAN_MODE): selector.TextSelector(),
-                vol.Required(CONF_SCHEDULE_ALWAYS_ACTIVE, default=False): selector.BooleanSelector(),
                 vol.Optional(CONF_SCHEDULE_START, default=DEFAULT_SCHEDULE_START): selector.TimeSelector(),
-                vol.Optional(CONF_SCHEDULE_END, default=DEFAULT_SCHEDULE_END): selector.TimeSelector(),
                 vol.Required(CONF_SCHEDULE_ONLY_WHEN_HOME, default=True): selector.BooleanSelector(),
-                vol.Required(CONF_SCHEDULE_USE_GAS, default=False): selector.BooleanSelector(),
                 vol.Optional(CONF_SCHEDULE_DEVICES, default=[]): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=device_options,
@@ -501,19 +476,19 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             try:
                 # Update the schedule at the stored index
+                existing_schedule = self._pending_schedules[self._active_schedule_index]
                 schedule_config = {
-                    CONF_SCHEDULE_ID: self._pending_schedules[self._active_schedule_index].get(CONF_SCHEDULE_ID, str(uuid.uuid4())),
+                    CONF_SCHEDULE_ID: existing_schedule.get(CONF_SCHEDULE_ID, str(uuid.uuid4())),
                     CONF_SCHEDULE_NAME: user_input[CONF_SCHEDULE_NAME],
                     CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
                     CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
-                    CONF_SCHEDULE_END: user_input.get(CONF_SCHEDULE_END, DEFAULT_SCHEDULE_END),
-                    CONF_SCHEDULE_ALWAYS_ACTIVE: user_input.get(CONF_SCHEDULE_ALWAYS_ACTIVE, False),
                     CONF_SCHEDULE_ONLY_WHEN_HOME: user_input.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True),
-                    CONF_SCHEDULE_USE_GAS: user_input.get(CONF_SCHEDULE_USE_GAS, False),
                     CONF_SCHEDULE_DEVICES: user_input.get(CONF_SCHEDULE_DEVICES, []),
                     CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
                     CONF_SCHEDULE_FAN_MODE: user_input.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE),
                 }
+                if CONF_SCHEDULE_END in existing_schedule:
+                    schedule_config[CONF_SCHEDULE_END] = existing_schedule[CONF_SCHEDULE_END]
                 self._pending_schedules[self._active_schedule_index] = schedule_config
                 self._active_schedule_index = None
                 return await self.async_step_manage_schedules()
@@ -546,25 +521,13 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                     CONF_SCHEDULE_FAN_MODE,
                     default=current_schedule.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE)
                 ): selector.TextSelector(),
-                vol.Required(
-                    CONF_SCHEDULE_ALWAYS_ACTIVE,
-                    default=current_schedule.get(CONF_SCHEDULE_ALWAYS_ACTIVE, False)
-                ): selector.BooleanSelector(),
                 vol.Optional(
                     CONF_SCHEDULE_START,
                     default=current_schedule.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START)
                 ): selector.TimeSelector(),
-                vol.Optional(
-                    CONF_SCHEDULE_END,
-                    default=current_schedule.get(CONF_SCHEDULE_END, DEFAULT_SCHEDULE_END)
-                ): selector.TimeSelector(),
                 vol.Required(
                     CONF_SCHEDULE_ONLY_WHEN_HOME,
                     default=current_schedule.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True)
-                ): selector.BooleanSelector(),
-                vol.Required(
-                    CONF_SCHEDULE_USE_GAS,
-                    default=current_schedule.get(CONF_SCHEDULE_USE_GAS, False)
                 ): selector.BooleanSelector(),
                 vol.Optional(
                     CONF_SCHEDULE_DEVICES,
@@ -675,8 +638,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
             data_schema=data_schema,
             description_placeholders={
                 "info": f"You are about to delete the schedule: '{schedule_name}'\n\n"
-                        f"Time: {schedule_to_delete.get(CONF_SCHEDULE_START, '')} - "
-                        f"{schedule_to_delete.get(CONF_SCHEDULE_END, '')}\n"
+                        f"Starts at: {schedule_to_delete.get(CONF_SCHEDULE_START, '')} (auto end)\n"
                         f"Devices: {len(schedule_to_delete.get(CONF_SCHEDULE_DEVICES, []))}\n\n"
                         "This action cannot be undone."
             }

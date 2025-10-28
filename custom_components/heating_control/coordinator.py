@@ -14,10 +14,8 @@ from .const import (
     CONF_AUTO_HEATING_ENABLED,
     CONF_CLIMATE_DEVICES,
     CONF_DEVICE_TRACKERS,
-    CONF_GAS_HEATER_ENTITY,
     CONF_ONLY_SCHEDULED_ACTIVE,
     CONF_SCHEDULES,
-    CONF_SCHEDULE_ALWAYS_ACTIVE,
     CONF_SCHEDULE_DEVICES,
     CONF_SCHEDULE_ENABLED,
     CONF_SCHEDULE_END,
@@ -27,10 +25,11 @@ from .const import (
     CONF_SCHEDULE_ONLY_WHEN_HOME,
     CONF_SCHEDULE_START,
     CONF_SCHEDULE_TEMPERATURE,
-    CONF_SCHEDULE_USE_GAS,
     DEFAULT_FINAL_SETTLE,
     DEFAULT_ONLY_SCHEDULED_ACTIVE,
+    DEFAULT_SCHEDULE_END,
     DEFAULT_SCHEDULE_FAN_MODE,
+    DEFAULT_SCHEDULE_START,
     DEFAULT_SCHEDULE_TEMPERATURE,
     DEFAULT_SETTLE_SECONDS,
     DOMAIN,
@@ -40,7 +39,6 @@ from .controller import ClimateController
 from .models import (
     DeviceDecision,
     DiagnosticsSnapshot,
-    GasHeaterDecision,
     HeatingStateSnapshot,
     ScheduleDecision,
 )
@@ -83,10 +81,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
             if should_apply_control:
                 _LOGGER.info("State transition detected, applying control decisions")
-                await self._controller.async_apply(
-                    snapshot.device_decisions.values(),
-                    snapshot.gas_heater_decision,
-                )
+                await self._controller.async_apply(snapshot.device_decisions.values())
             else:
                 _LOGGER.debug(
                     "No state transitions, skipping control application (preserving manual changes)"
@@ -154,10 +149,62 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         self._force_update = True
 
     @staticmethod
+    def _derive_auto_end_times(schedules: List[dict]) -> Dict[str, str]:
+        """Derive implicit end times using the next enabled schedule start time."""
+        timeline: List[Tuple[int, int, str, str]] = []
+
+        for index, schedule in enumerate(schedules):
+            if schedule.get(CONF_SCHEDULE_END):
+                continue
+            if not schedule.get(CONF_SCHEDULE_ENABLED, True):
+                continue
+
+            schedule_id = (
+                schedule.get(CONF_SCHEDULE_ID)
+                or schedule.get(CONF_SCHEDULE_NAME)
+                or f"schedule_{index}"
+            )
+            raw_start = str(schedule.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START))
+            start_hm = raw_start[:5]
+
+            try:
+                hours, minutes = start_hm.split(":")
+                start_minutes = int(hours) * 60 + int(minutes)
+            except (ValueError, AttributeError):
+                start_hm = DEFAULT_SCHEDULE_START
+                hours, minutes = start_hm.split(":")
+                start_minutes = int(hours) * 60 + int(minutes)
+
+            timeline.append((start_minutes, index, schedule_id, start_hm))
+
+        if not timeline:
+            return {}
+
+        timeline.sort()
+        derived: Dict[str, str] = {}
+        total = len(timeline)
+
+        for position, (_, _, schedule_id, start_hm) in enumerate(timeline):
+            if total == 1:
+                derived[schedule_id] = DEFAULT_SCHEDULE_END
+                continue
+
+            derived_end = DEFAULT_SCHEDULE_END
+            for offset in range(1, total):
+                candidate = timeline[(position + offset) % total][3]
+                if candidate != start_hm:
+                    derived_end = candidate
+                    break
+
+            derived[schedule_id] = derived_end
+
+        return derived
+
+    @staticmethod
     def _is_time_in_schedule(now_hm: str, start_hm: str, end_hm: str) -> bool:
         """Check if current time is within schedule."""
         if start_hm == end_hm:
-            return False
+            return True
 
         spans_midnight = end_hm < start_hm
         if not spans_midnight:
@@ -178,7 +225,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             CONF_ONLY_SCHEDULED_ACTIVE, DEFAULT_ONLY_SCHEDULED_ACTIVE
         )
 
-        schedule_decisions, device_builders, gas_heater_sources = self._evaluate_schedules(
+        schedule_decisions, device_builders = self._evaluate_schedules(
             config,
             now_hm,
             anyone_home,
@@ -191,10 +238,6 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             anyone_home,
             auto_heating_enabled,
             only_scheduled_active,
-        )
-
-        gas_heater_decision = self._build_gas_heater_decision(
-            config, gas_heater_sources
         )
 
         diagnostics = DiagnosticsSnapshot(
@@ -216,7 +259,6 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             anyone_home=anyone_home,
             schedule_decisions=schedule_decisions,
             device_decisions=device_decisions,
-            gas_heater_decision=gas_heater_decision,
             diagnostics=diagnostics,
         )
 
@@ -256,26 +298,29 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
     ) -> Tuple[
         Dict[str, ScheduleDecision],
         Dict[str, Dict[str, List]],
-        List[Dict[str, object]],
     ]:
         """Evaluate all configured schedules and prepare device aggregations."""
         schedules = config.get(CONF_SCHEDULES, [])
         schedule_decisions: Dict[str, ScheduleDecision] = {}
         device_builders: Dict[str, Dict[str, List]] = {}
-        gas_heater_sources: List[Dict[str, object]] = []
 
-        for schedule in schedules:
+        auto_end_times = self._derive_auto_end_times(schedules)
+
+        for index, schedule in enumerate(schedules):
             schedule_id = (
                 schedule.get(CONF_SCHEDULE_ID)
-                or schedule.get(CONF_SCHEDULE_NAME, "unnamed")
+                or schedule.get(CONF_SCHEDULE_NAME)
+                or f"schedule_{index}"
             )
             schedule_name = schedule.get(CONF_SCHEDULE_NAME, "Unnamed")
             enabled = schedule.get(CONF_SCHEDULE_ENABLED, True)
-            always_active = schedule.get(CONF_SCHEDULE_ALWAYS_ACTIVE, False)
-            start_time = str(schedule.get(CONF_SCHEDULE_START, "00:00"))[:5]
-            end_time = str(schedule.get(CONF_SCHEDULE_END, "23:59"))[:5]
+            start_time = str(schedule.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START))[:5]
+            configured_end = schedule.get(CONF_SCHEDULE_END)
+            if configured_end:
+                end_time = str(configured_end)[:5]
+            else:
+                end_time = auto_end_times.get(schedule_id, DEFAULT_SCHEDULE_END)
             only_when_home = schedule.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True)
-            use_gas_heater = schedule.get(CONF_SCHEDULE_USE_GAS, False)
             device_entities = schedule.get(CONF_SCHEDULE_DEVICES, [])
             schedule_temp = float(
                 schedule.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE)
@@ -284,7 +329,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE
             )
 
-            in_time_window = always_active or self._is_time_in_schedule(
+            in_time_window = self._is_time_in_schedule(
                 now_hm, start_time, end_time
             )
             presence_ok = (not only_when_home) or anyone_home
@@ -297,13 +342,11 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 name=schedule_name,
                 start_time=start_time,
                 end_time=end_time,
-                always_active=always_active,
                 only_when_home=only_when_home,
                 enabled=enabled,
                 is_active=is_active,
                 in_time_window=in_time_window,
                 presence_ok=presence_ok,
-                use_gas_heater=use_gas_heater,
                 device_count=len(device_entities),
                 devices=tuple(device_entities),
                 target_temp=schedule_temp,
@@ -311,12 +354,6 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             )
 
             if not is_active:
-                continue
-
-            if use_gas_heater:
-                gas_heater_sources.append(
-                    {"name": schedule_name, "temp": schedule_temp, "fan": schedule_fan}
-                )
                 continue
 
             for device_entity in device_entities:
@@ -334,7 +371,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 builder["fan_modes"].append(schedule_fan)
                 builder["should_be_active"] = True
 
-        return schedule_decisions, device_builders, gas_heater_sources
+        return schedule_decisions, device_builders
 
     def _finalize_device_decisions(
         self,
@@ -385,36 +422,6 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             )
 
         return device_decisions
-
-    def _build_gas_heater_decision(
-        self, config, gas_heater_sources: List[Dict[str, object]]
-    ) -> Optional[GasHeaterDecision]:
-        """Return the gas heater decision for the current cycle."""
-        gas_heater_entity = config.get(CONF_GAS_HEATER_ENTITY)
-        if not gas_heater_entity:
-            return None
-
-        should_be_active = False
-        target_temp = DEFAULT_SCHEDULE_TEMPERATURE
-        target_fan = DEFAULT_SCHEDULE_FAN_MODE
-        active_schedule_names: List[str] = []
-
-        if gas_heater_sources:
-            temps = [source["temp"] for source in gas_heater_sources]
-            max_temp = max(temps)
-            max_temp_idx = temps.index(max_temp)
-            should_be_active = True
-            target_temp = max_temp
-            target_fan = gas_heater_sources[max_temp_idx]["fan"]
-            active_schedule_names = [source["name"] for source in gas_heater_sources]
-
-        return GasHeaterDecision(
-            entity_id=gas_heater_entity,
-            should_be_active=should_be_active,
-            target_temp=target_temp,
-            target_fan=target_fan,
-            active_schedules=tuple(active_schedule_names),
-        )
 
     async def async_set_schedule_enabled(
         self,

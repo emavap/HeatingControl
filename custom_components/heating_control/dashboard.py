@@ -15,7 +15,6 @@ from homeassistant.util import slugify
 from .const import (
     CONF_CLIMATE_DEVICES,
     CONF_DEVICE_TRACKERS,
-    CONF_GAS_HEATER_ENTITY,
     DOMAIN,
     SCHEDULE_SWITCH_ENTITY_TEMPLATE,
 )
@@ -75,16 +74,15 @@ class HeatingControlDashboardStrategy(Strategy):
         climate_entities: Sequence[str] = self._get_config_list(
             coordinator, CONF_CLIMATE_DEVICES
         )
-        gas_heater = self._get_config_value(coordinator, CONF_GAS_HEATER_ENTITY)
         snapshot = coordinator.data
 
-        device_cards = self._build_device_cards(climate_entities, gas_heater)
+        device_cards = self._build_device_cards(climate_entities)
         tracker_entities: Sequence[str] = self._get_config_list(
             coordinator, CONF_DEVICE_TRACKERS
         )
 
         status_cards = self._build_status_cards(
-            entry_id, snapshot, climate_entities, gas_heater, tracker_entities
+            entry_id, snapshot, climate_entities, tracker_entities
         )
 
         sections: List[Dict[str, Any]] = []
@@ -174,7 +172,7 @@ class HeatingControlDashboardStrategy(Strategy):
         return entity_id.split(".", 1)[-1].replace("_", " ").title()
 
     def _build_device_cards(
-        self, climate_entities: Sequence[str], gas_heater: Optional[str]
+        self, climate_entities: Sequence[str]
     ) -> List[Dict[str, Any]]:
         """Create thermostat cards for all climate devices."""
         cards: List[Dict[str, Any]] = []
@@ -185,15 +183,6 @@ class HeatingControlDashboardStrategy(Strategy):
                     "type": "thermostat",
                     "entity": entity,
                     "name": self._friendly_name(entity),
-                }
-            )
-
-        if gas_heater:
-            cards.append(
-                {
-                    "type": "thermostat",
-                    "entity": gas_heater,
-                    "name": self._friendly_name(gas_heater),
                 }
             )
 
@@ -213,7 +202,6 @@ class HeatingControlDashboardStrategy(Strategy):
         entry_id: str,
         snapshot,
         climate_entities: Sequence[str],
-        gas_heater: Optional[str],
         tracker_entities: Sequence[str],
     ) -> List[Dict[str, Any]]:
         """Create entities/tile cards summarising integration status."""
@@ -229,14 +217,6 @@ class HeatingControlDashboardStrategy(Strategy):
                 "name": "Residents away",
             },
         ]
-
-        if gas_heater:
-            status_entities.append(
-                {
-                    "entity": "binary_sensor.heating_gas_heater",
-                    "name": "Gas heater requested",
-                }
-            )
 
         cards.append(
             {
@@ -325,18 +305,15 @@ class HeatingControlDashboardStrategy(Strategy):
             switch_entity = self._schedule_switch_entity(entry_id, decision.schedule_id)
 
             display_name = decision.name
-            if decision.always_active:
-                time_caption = "Always active"
+            if decision.start_time == decision.end_time:
+                time_caption = "All day"
             else:
                 time_caption = f"{decision.start_time} → {decision.end_time}"
 
             detail_label = self._format_schedule_label(decision)
-            if decision.always_active:
-                label = detail_label or time_caption
-            else:
-                label = time_caption
-                if detail_label:
-                    label = f"{time_caption} • {detail_label}"
+            label = time_caption
+            if detail_label:
+                label = f"{time_caption} • {detail_label}"
 
             if decision.is_active:
                 icon = "mdi:calendar-star"
@@ -405,17 +382,11 @@ class HeatingControlDashboardStrategy(Strategy):
         """Return a descriptive label for a schedule card."""
         parts: List[str] = []
 
-        if decision.always_active:
-            parts.append("Always active")
-        else:
-            window_status = "Window open" if decision.in_time_window else "Window closed"
-            parts.append(window_status)
+        window_status = "Window open" if decision.in_time_window else "Window closed"
+        parts.append(window_status)
 
         if decision.only_when_home:
             parts.append("Home required")
-
-        if decision.use_gas_heater:
-            parts.append("Gas heater")
 
         if decision.device_count:
             device_suffix = "device" if decision.device_count == 1 else "devices"

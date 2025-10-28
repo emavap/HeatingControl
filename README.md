@@ -7,7 +7,6 @@ A custom Home Assistant integration that **automatically controls** climate devi
 - **Automatic Device Control**: Integration directly controls all configured climate devices
 - **Schedule-Based**: Define multiple schedules with time windows and device assignments
 - **Many-to-Many Relationships**: Devices can be in multiple schedules, schedules can have multiple devices
-- **Gas Heater Override**: Any schedule can use the gas heater instead of assigned aircos
 - **Presence-Based**: Schedules can require someone to be home
 - **Binary Sensors**: Monitor heating decisions and current state
 - **Decision Diagnostics**: Full visibility into heating logic
@@ -57,7 +56,6 @@ The integration uses a schedule-based model where you define time windows and as
 
 Configure settings that apply to all schedules:
 
-- **Gas Heater Entity**: Your gas heating thermostat (optional)
 - **Device Trackers**: One or more device trackers for presence detection (optional)
 - **Automatic Heating**: Master enable/disable switch for automatic heating
 - **Only Scheduled Devices Active**: If enabled, devices not in any schedule remain off. If disabled, devices not in schedules will be on when someone is home (default: false)
@@ -74,11 +72,9 @@ For each schedule, configure:
 - **Enabled**: Enable/disable this schedule
 - **Target Temperature**: Temperature for this schedule (default: 20°C)
 - **Fan Mode**: Fan mode for this schedule (default: "auto")
-- **Always Active**: Schedule ignores time window and is always active
 - **Start Time**: When schedule becomes active (default: 00:00)
-- **End Time**: When schedule becomes inactive (default: 23:59)
+- **Automatic End**: The schedule stays active until another schedule begins
 - **Only When Home**: Schedule only active when someone is home
-- **Use Gas Heater**: Use gas heater instead of assigned devices
 - **Devices**: Select which climate devices this schedule controls
 
 ## How It Works
@@ -88,7 +84,7 @@ For each schedule, configure:
 Every 60 seconds, the integration:
 
 1. **Evaluates All Schedules**:
-   - Time Window Check: Is current time within schedule start/end (or always active)?
+   - Time Window Check: Is current time within the schedule window?
    - Presence Check: Is presence requirement met (only when home)?
    - Schedule Active: Both conditions must be true
 
@@ -118,8 +114,7 @@ For each configured schedule, the integration checks:
 1. **Is the schedule enabled?** If disabled, skip it.
 2. **Is automatic heating enabled globally?** If not, skip all schedules.
 3. **Time Window Check**:
-   - If "Always Active" is enabled, this check passes automatically
-   - Otherwise, check if current time is between start_time and end_time
+   - Check if current time is between start_time and end_time
    - Handles schedules that span midnight (e.g., 22:00 to 07:00)
 4. **Presence Check**:
    - If "Only When Home" is enabled, at least one device tracker must be "home"
@@ -131,16 +126,10 @@ If ALL conditions pass, the schedule is **ACTIVE**.
 
 For each **active** schedule:
 
-- **If "Use Gas Heater" is enabled**:
-  - The schedule is added to the gas heater's list of requesting schedules
-  - The schedule's temperature and fan mode are recorded for the gas heater
-  - The assigned devices are NOT turned on (gas heater replaces them)
-
-- **If "Use Gas Heater" is disabled AND devices are assigned**:
-  - Each assigned device is marked as "should be on"
-  - The schedule's temperature is added to that device's temperature list
-  - The schedule's fan mode is added to that device's fan mode list
-  - The schedule name is added to the device's active schedules list
+- Each assigned device is marked as "should be on"
+- The schedule's temperature is added to that device's temperature list
+- The schedule's fan mode is added to that device's fan mode list
+- The schedule name is added to the device's active schedules list
 
 #### Step 3: Handle Devices Not in Any Schedule
 
@@ -172,31 +161,9 @@ Result:
   - Target Fan Mode: "high" (from "Evening Heat" schedule)
 ```
 
-#### Step 5: Gas Heater Temperature Resolution
+#### Step 5: Execute Control Commands
 
-If any active schedules have "Use Gas Heater" enabled:
-
-1. Collect all temperatures from schedules using the gas heater
-2. **Select the HIGHEST temperature** as the gas heater target
-3. Find which schedule provided that highest temperature
-4. Use the **fan mode from that same schedule**
-
-**Example:**
-```
-Gas Heater
-Active Schedules Using It:
-  - "Day Living Areas": 20°C, fan: "auto"
-  - "Cold Morning Boost": 24°C, fan: "high"
-
-Result:
-  - Gas Heater: ON
-  - Target Temperature: 24°C (highest)
-  - Target Fan Mode: "high" (from "Cold Morning Boost")
-```
-
-#### Step 6: Execute Control Commands
-
-For each device and the gas heater:
+For each managed climate device:
 
 1. **Resolve desired state**: Collect the target HVAC mode (on/off), temperature, and fan mode from the decision engine
 2. **Compare with last command**: The coordinator remembers the last HVAC/temperature/fan values it sent for each entity
@@ -220,7 +187,7 @@ The "highest temperature wins" logic ensures user comfort in complex scenarios:
 ```
 Bedroom AC is in two schedules:
 1. "Night Sleep": 18°C (22:00 - 07:00) - for sleeping comfort
-2. "Cold Weather Boost": 22°C (Always Active, only when temp < 10°C outside)
+2. "Cold Weather Boost": 22°C (Starts at 05:00, only when temp < 10°C outside)
 
 On a very cold night:
 - Both schedules are active
@@ -244,39 +211,6 @@ A: This depends on the "Only Scheduled Devices Active" setting:
 - **If TRUE**: Devices not in any schedule stay OFF (most restrictive, saves energy)
 - **If FALSE**: Devices not in any schedule turn ON when someone is home (convenience mode)
 
-### Gas Heater Override Logic
-
-When a schedule has "Use Gas Heater" enabled:
-
-1. **Schedule Must Be Active**: All normal schedule conditions apply (time, presence, enabled)
-2. **Gas Heater Turns ON**: The gas heater activates at the schedule's temperature
-3. **Assigned Devices Stay OFF**: Any devices assigned to this schedule do NOT turn on
-4. **Purpose**: This allows you to use gas heating instead of individual aircos during certain periods
-
-**Important:** The gas heater only activates if the schedule has "Use Gas Heater" enabled AND the schedule is active. Multiple schedules can request the gas heater, and it will use the highest temperature from those schedules.
-
-**Example:**
-
-```yaml
-Schedule: "Daytime Gas Heating"
-  Time: 07:00 - 22:00
-  Temperature: 21°C
-  Use Gas Heater: Yes
-  Devices: [bedroom_ac, living_room_ac, kitchen_ac]
-
-When Active:
-  - Gas heater: ON at 21°C
-  - bedroom_ac: OFF (not ON, because gas heater is being used)
-  - living_room_ac: OFF
-  - kitchen_ac: OFF
-
-When Inactive (e.g., 23:00):
-  - Gas heater: OFF
-  - bedroom_ac: depends on other schedules or "Only Scheduled Devices Active"
-  - living_room_ac: depends on other schedules
-  - kitchen_ac: depends on other schedules
-```
-
 ### Device Assignment Logic
 
 - Devices can be assigned to **multiple schedules**
@@ -285,43 +219,11 @@ When Inactive (e.g., 23:00):
   - If "Only Scheduled Devices Active" = true: remain off
   - If "Only Scheduled Devices Active" = false: on when someone is home
 
-### Gas Heater Override
-
-When a schedule has **"Use Gas Heater" enabled**:
-- If the schedule is active AND has devices assigned
-- The gas heater will be used **instead** of those devices
-- The assigned devices will NOT be turned on
-
-**Example:**
-```yaml
-Schedule: "Day Time"
-  Start: 07:00
-  End: 22:00
-  Use Gas Heater: Yes
-  Devices: [bedroom_ac, living_room_ac, kitchen_ac]
-
-Result when active:
-  - Gas heater: ON
-  - bedroom_ac: OFF
-  - living_room_ac: OFF
-  - kitchen_ac: OFF
-```
-
 ## Exposed Entities
 
 ### Global Binary Sensors
 
 - `binary_sensor.heating_control_both_away` - Are both residents away
-
-### Gas Heater Binary Sensor
-
-- `binary_sensor.heating_gas_heater` - Should gas heater be active
-
-**Attributes:**
-- `entity_id` - The gas heater climate entity
-- `target_temp` - Target temperature (highest from active schedules using gas heater)
-- `target_fan` - Target fan mode (from schedule with highest temperature)
-- `active_schedules` - List of schedules using gas heater
 
 ### Per-Schedule Binary Sensors
 
@@ -332,7 +234,6 @@ For each schedule configured:
 - `schedule_name` - Schedule name
 - `in_time_window` - Is current time within schedule window
 - `presence_ok` - Does presence requirement allow activation
-- `use_gas_heater` - Does this schedule use gas heater
 - `device_count` - Number of devices in schedule
 - `devices` - List of device entity IDs
 - `target_temp` - Target temperature
@@ -363,7 +264,6 @@ Schedule: "Bedroom Night"
   Start: 22:00
   End: 07:00
   Only When Home: Yes
-  Use Gas Heater: No
   Devices: [bedroom_ac, bedroom_ac_2]
 
 Result:
@@ -372,38 +272,32 @@ Result:
   - These ACs can also be in other schedules
 ```
 
-### Scenario 2: Day Time with Gas Heater
+### Scenario 2: Three-Room Morning/Evening Routine
 
-```yaml
-Schedule: "Day Living Areas"
-  Start: 07:00
-  End: 22:00
-  Only When Home: Yes
-  Use Gas Heater: Yes
-  Devices: [living_room_ac, kitchen_ac, office_ac]
+This example mirrors a common setup with three air conditioners (`kitchen`, `bedroom1`, `bedroom2`):
 
-Result:
-  - Between 07:00-22:00 when someone is home: gas heater on
-  - The listed ACs will NOT be used (gas heater replaces them)
-  - Gas heater off all other times
-```
+| Start | Name | Devices | Target |
+|-------|------|---------|--------|
+| 07:00 | Morning Warmup | kitchen, bedroom1, bedroom2 | 20°C |
+| 10:00 | Daytime Kitchen | kitchen | 20°C |
+| 19:00 | Evening Kitchen | kitchen | 20°C |
+| 19:00 | Evening Bedroom2 | bedroom2 | 22°C |
+| 21:00 | Night Kitchen | kitchen | 20°C |
+| 21:00 | Night Bedroom1 | bedroom1 | 20°C |
+| 21:00 | Night Bedroom2 | bedroom2 | 22°C |
+| 23:00 | Lights Out | *(no devices)* | — |
 
-### Scenario 3: Office Always On (Even When Away)
+How it plays out:
 
-```yaml
-Schedule: "Office Work Hours"
-  Start: 09:00
-  End: 17:00
-  Only When Home: No
-  Use Gas Heater: No
-  Devices: [office_ac]
+- **07:00 → 10:00**: All three rooms warm up to 20 °C.
+- **10:00 → 19:00**: Only the kitchen stays on; bedrooms idle.
+- **19:00 → 21:00**: Kitchen stays at 20 °C while bedroom2 gets a 22 °C boost.
+- **21:00 → 23:00**: Bedroom1 joins back at 20 °C, bedroom2 remains at 22 °C, kitchen unchanged.
+- **After 23:00**: No active schedules, so every unit turns off thanks to the empty “Lights Out” schedule and the `Only Scheduled Devices Active` option.
 
-Result:
-  - Between 09:00-17:00 every day: office_ac on
-  - Works even when no one is home
-```
+This pattern highlights how start-only schedules let you build a day by chaining “what happens next” blocks. If a device should continue past a later start time, create another schedule for it at that moment.
 
-### Scenario 4: Device in Multiple Schedules
+### Scenario 3: Device in Multiple Schedules
 
 ```yaml
 Schedule 1: "Morning Kitchen"
@@ -430,10 +324,9 @@ The integration **automatically controls** all configured climate devices every 
 ### What Happens Automatically
 
 1. **Schedule Evaluation**: All schedules are evaluated based on current time and presence rules
-2. **Decision Building**: Target HVAC state, temperature, and fan mode are computed for every climate device (highest temperature wins) and the gas heater
+2. **Decision Building**: Target HVAC state, temperature, and fan mode are computed for every climate device (highest temperature wins)
 3. **Change Detection**: Decisions are compared against the last command sent to each entity to determine what actually needs to change
 4. **Command Dispatch**: HVAC mode, temperature, and fan commands are sent only where differences are detected, with settle delays when toggling HVAC state
-5. **Gas Heater Handling**: The gas heater is turned on when requested by a schedule and explicitly turned off when no schedule needs it
 
 ### Device Control Logic
 
@@ -452,21 +345,7 @@ The integration **automatically controls** all configured climate devices every 
 Binary sensors are provided for monitoring and creating custom notifications or additional automations:
 
 ```yaml
-# Example: Notify when gas heater turns on
-automation:
-  - alias: "Notify Gas Heater On"
-    trigger:
-      - platform: state
-        entity_id: binary_sensor.heating_gas_heater
-        to: "on"
-    action:
-      - service: notify.mobile_app
-        data:
-          message: "Gas heater activated: {{ state_attr('binary_sensor.heating_gas_heater', 'active_schedules') }}"
-```
-
-```yaml
-# Example: Notify when specific schedule becomes active
+# Example: Notify when a specific schedule becomes active
 automation:
   - alias: "Heating Night Mode Active"
     trigger:
@@ -504,7 +383,7 @@ Heating Control **automatically creates** a dashboard when you install the integ
 #### What's Included
 
 The auto-generated dashboard includes:
-- **Thermostat Cards**: For every managed climate device (and the optional gas heater)
+- **Thermostat Cards**: For every managed climate device
 - **Schedule Grid**: Toggle schedules on/off, see which are active
 - **Live Status**: Real-time device states and diagnostics
 - **Refresh Button**: Manually trigger coordinator updates
@@ -541,9 +420,9 @@ Prefer manual control? The `examples/dashboards/smart_heating_dashboard.yaml` fi
 - `__init__.py` - Integration setup and entry point
 - `config_flow.py` - Multi-step UI configuration wizard (global settings → devices → schedules)
 - `coordinator.py` - Coordinates schedule evaluation and orchestrates control flow
-- `models.py` - Dataclasses describing schedule/device/gas-heater decisions and diagnostics
+- `models.py` - Dataclasses describing schedule/device decisions and diagnostics
 - `controller.py` - Encapsulates climate service calls and device command history
-- `binary_sensor.py` - Binary sensor entities (schedule, device, gas heater sensors)
+- `binary_sensor.py` - Binary sensor entities (schedule and device sensors)
 - `switch.py` - Schedule enable/disable switches
 - `sensor.py` - Regular sensor entities for diagnostics
 - `const.py` - Constants and configuration keys

@@ -8,7 +8,10 @@ from typing import Any, Optional
 import voluptuous as vol
 
 from homeassistant.components import frontend, websocket_api
-from homeassistant.components.http import StaticPathConfig
+try:  # Home Assistant 2024.4+ exposes StaticPathConfig
+    from homeassistant.components.http import StaticPathConfig
+except ImportError:  # pragma: no cover - older HA cores
+    StaticPathConfig = None  # type: ignore[assignment]
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -177,6 +180,12 @@ async def _async_setup_frontend(hass: HomeAssistant) -> None:
         _LOGGER.debug(
             "Frontend directory %s is missing; skipping strategy asset registration",
             frontend_dir,
+        )
+        return
+
+    if StaticPathConfig is None:
+        _LOGGER.debug(
+            "Static path registration unavailable; skipping strategy asset exposure"
         )
         return
 

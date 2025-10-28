@@ -12,7 +12,6 @@ from homeassistant.util import slugify
 
 from .const import (
     CONF_SCHEDULES,
-    CONF_SCHEDULE_ALWAYS_ACTIVE,
     CONF_SCHEDULE_DEVICES,
     CONF_SCHEDULE_ENABLED,
     CONF_SCHEDULE_END,
@@ -20,7 +19,6 @@ from .const import (
     CONF_SCHEDULE_NAME,
     CONF_SCHEDULE_ONLY_WHEN_HOME,
     CONF_SCHEDULE_START,
-    CONF_SCHEDULE_USE_GAS,
     DOMAIN,
     SCHEDULE_SWITCH_ENTITY_TEMPLATE,
 )
@@ -114,11 +112,9 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
                 "schedule_id": schedule.schedule_id,
                 "start_time": schedule.start_time,
                 "end_time": schedule.end_time,
-                "always_active": schedule.always_active,
                 "only_when_home": schedule.only_when_home,
                 "in_time_window": schedule.in_time_window,
                 "presence_ok": schedule.presence_ok,
-                "use_gas_heater": schedule.use_gas_heater,
                 "device_count": schedule.device_count,
                 "target_temp": schedule.target_temp,
                 "target_fan": schedule.target_fan,
@@ -130,9 +126,7 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
                 "schedule_id": config_schedule.get(CONF_SCHEDULE_ID, self._schedule_id),
                 "start_time": config_schedule.get(CONF_SCHEDULE_START),
                 "end_time": config_schedule.get(CONF_SCHEDULE_END),
-                "always_active": config_schedule.get(CONF_SCHEDULE_ALWAYS_ACTIVE, False),
                 "only_when_home": config_schedule.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True),
-                "use_gas_heater": config_schedule.get(CONF_SCHEDULE_USE_GAS, False),
                 "device_count": len(config_schedule.get(CONF_SCHEDULE_DEVICES, [])),
             }
 

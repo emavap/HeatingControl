@@ -25,10 +25,7 @@ async def async_setup_entry(
     """Set up the binary sensor platform."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities = [
-        BothAwayBinarySensor(coordinator, entry),
-        GasHeaterBinarySensor(coordinator, entry),
-    ]
+    entities = [BothAwayBinarySensor(coordinator, entry)]
 
     # Add per-schedule binary sensors
     if coordinator.data:
@@ -84,44 +81,6 @@ class BothAwayBinarySensor(HeatingControlBinarySensor):
         return bool(snapshot and snapshot.both_away)
 
 
-class GasHeaterBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """Binary sensor for gas heater active status."""
-
-    def __init__(
-        self, coordinator: HeatingControlCoordinator, entry: ConfigEntry
-    ) -> None:
-        """Initialize the sensor."""
-        super().__init__(coordinator)
-        self._entry_id = entry.entry_id
-        self._attr_unique_id = f"{entry.entry_id}_gas_heater"
-        self._attr_name = "Heating Gas Heater"
-        self._attr_icon = "mdi:fire"
-        self._attr_device_class = BinarySensorDeviceClass.RUNNING
-
-    @property
-    def is_on(self) -> bool:
-        """Return true if gas heater should be active."""
-        snapshot = self.coordinator.data
-        if not snapshot or not snapshot.gas_heater_decision:
-            return False
-        return snapshot.gas_heater_decision.should_be_active
-
-    @property
-    def extra_state_attributes(self) -> dict[str, any]:
-        """Return additional attributes."""
-        snapshot = self.coordinator.data
-        decision = snapshot.gas_heater_decision if snapshot else None
-        if not decision:
-            return {}
-
-        return {
-            "entity_id": decision.entity_id,
-            "target_temp": decision.target_temp,
-            "target_fan": decision.target_fan,
-            "active_schedules": list(decision.active_schedules),
-        }
-
-
 class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
     """Binary sensor for schedule active status."""
 
@@ -167,11 +126,9 @@ class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "enabled": schedule.enabled,
             "start_time": schedule.start_time,
             "end_time": schedule.end_time,
-            "always_active": schedule.always_active,
             "only_when_home": schedule.only_when_home,
             "in_time_window": schedule.in_time_window,
             "presence_ok": schedule.presence_ok,
-            "use_gas_heater": schedule.use_gas_heater,
             "device_count": schedule.device_count,
             "devices": list(schedule.devices),
             "target_temp": schedule.target_temp,

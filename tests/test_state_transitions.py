@@ -37,13 +37,11 @@ def snapshot(
             name=schedule_id.title(),
             start_time="00:00",
             end_time="23:59",
-            always_active=False,
             only_when_home=True,
             enabled=True,
             is_active=is_active,
             in_time_window=True,
             presence_ok=True,
-            use_gas_heater=False,
             device_count=0,
             devices=(),
             target_temp=20.0,
@@ -69,7 +67,6 @@ def snapshot(
         anyone_home=anyone_home,
         schedule_decisions=schedule_decisions,
         device_decisions={},
-        gas_heater_decision=None,
         diagnostics=diagnostics,
     )
 

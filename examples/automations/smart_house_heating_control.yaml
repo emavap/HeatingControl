@@ -83,11 +83,11 @@ actions:
                   - conditions:
                       - condition: template
                         value_template: >-
-                          {{ states(gas_heater_entity) not in
+                          {{ states(kitchen_climate_entity) not in
                           ['unknown','unavailable','None', None] }}
                     sequence:
                       - target:
-                          entity_id: "{{ gas_heater_entity }}"
+                          entity_id: "{{ kitchen_climate_entity }}"
                         data:
                           hvac_mode: "off"
                         action: climate.set_hvac_mode
@@ -208,18 +208,18 @@ actions:
               - conditions:
                   - condition: template
                     value_template: >-
-                      {{ states(gas_heater_entity) not in
+                      {{ states(kitchen_climate_entity) not in
                       ['unknown','unavailable','None', None] }}
                 sequence:
                   - target:
-                      entity_id: "{{ gas_heater_entity }}"
+                      entity_id: "{{ kitchen_climate_entity }}"
                     data:
                       hvac_mode: heat
                     action: climate.set_hvac_mode
                   - delay:
                       seconds: "{{ settle_seconds }}"
                   - target:
-                      entity_id: "{{ gas_heater_entity }}"
+                      entity_id: "{{ kitchen_climate_entity }}"
                     data:
                       temperature: "{{ target_temp }}"
                     action: climate.set_temperature
@@ -227,7 +227,7 @@ actions:
                       seconds: "{{ final_settle }}"
 mode: restart
 variables:
-  gas_heater_entity: climate.thermostat_hc1
+  kitchen_climate_entity: climate.kitchen_ac
   bedroom_aircos:
     - climate.aircobedroom_8ac419_aircobedroom
     - climate.aircobedroom2_aircobedroom2

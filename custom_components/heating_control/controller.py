@@ -9,7 +9,7 @@ from typing import Dict, Iterable, Optional
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 
-from .models import DeviceDecision, GasHeaterDecision
+from .models import DeviceDecision
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,17 +41,8 @@ class ClimateController:
     async def async_apply(
         self,
         device_decisions: Iterable[DeviceDecision],
-        gas_heater_decision: Optional[GasHeaterDecision],
     ) -> None:
-        """Apply decisions to all devices, including the gas heater."""
-        if gas_heater_decision:
-            await self._apply_device(
-                gas_heater_decision.entity_id,
-                gas_heater_decision.should_be_active,
-                gas_heater_decision.target_temp,
-                gas_heater_decision.target_fan,
-            )
-
+        """Apply decisions to all managed climate devices."""
         for decision in device_decisions:
             await self._apply_device(
                 decision.entity_id,
