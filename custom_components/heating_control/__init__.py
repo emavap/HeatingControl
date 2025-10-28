@@ -144,33 +144,74 @@ def _create_dashboard_sync(
     # Check if dashboard file already exists
     if dashboard_file.exists():
         _LOGGER.debug("Dashboard file already exists: %s", dashboard_file)
-        return
+    else:
+        # Create dashboard configuration
+        dashboard_config = {
+            "version": 1,
+            "minor_version": 1,
+            "key": url_path,
+            "data": {
+                "config": {
+                    "strategy": {
+                        "type": f"custom:{DOMAIN}-smart-heating",
+                        "entry_id": entry_id,
+                    }
+                },
+                "title": DASHBOARD_TITLE,
+                "icon": DASHBOARD_ICON,
+                "show_in_sidebar": True,
+                "require_admin": False,
+            },
+        }
 
-    # Create dashboard configuration
-    dashboard_config = {
+        # Write dashboard configuration
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        with dashboard_file.open("w", encoding="utf-8") as f:
+            json.dump(dashboard_config, f, indent=2)
+
+        _LOGGER.debug("Created dashboard file: %s", dashboard_file)
+
+    # Ensure the dashboard is registered so it shows up in the sidebar
+    dashboards_file = storage_dir / "lovelace_dashboards"
+    dashboards_data = {
         "version": 1,
         "minor_version": 1,
-        "key": url_path,
-        "data": {
-            "config": {
-                "strategy": {
-                    "type": f"custom:{DOMAIN}-smart-heating",
-                    "entry_id": entry_id,
-                }
-            },
-            "title": DASHBOARD_TITLE,
-            "icon": DASHBOARD_ICON,
-            "show_in_sidebar": True,
-            "require_admin": False,
-        },
+        "key": "lovelace_dashboards",
+        "data": {"items": {}},
     }
 
-    # Write dashboard configuration
-    storage_dir.mkdir(parents=True, exist_ok=True)
-    with dashboard_file.open("w", encoding="utf-8") as f:
-        json.dump(dashboard_config, f, indent=2)
+    if dashboards_file.exists():
+        try:
+            with dashboards_file.open("r", encoding="utf-8") as f:
+                dashboards_data = json.load(f)
+        except json.JSONDecodeError as err:
+            _LOGGER.warning(
+                "Failed to read existing lovelace_dashboards file (%s), recreating: %s",
+                dashboards_file,
+                err,
+            )
 
-    _LOGGER.debug("Created dashboard file: %s", dashboard_file)
+    items = dashboards_data.setdefault("data", {}).setdefault("items", {})
+
+    if url_path in items:
+        _LOGGER.debug(
+            "Dashboard '%s' already registered in lovelace_dashboards", url_path
+        )
+        return
+
+    items[url_path] = {
+        "mode": "storage",
+        "filename": f"lovelace.{url_path}",
+        "title": DASHBOARD_TITLE,
+        "icon": DASHBOARD_ICON,
+        "show_in_sidebar": True,
+        "require_admin": False,
+    }
+
+    with dashboards_file.open("w", encoding="utf-8") as f:
+        json.dump(dashboards_data, f, indent=2)
+
+    _LOGGER.debug("Registered dashboard '%s' in lovelace_dashboards", url_path)
 
 
 async def _async_remove_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> None:
