@@ -103,11 +103,33 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def _async_setup_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Auto-create a dashboard for easy access to heating controls."""
+    generated_config: Optional[dict[str, Any]] = None
+
     if not SUPPORTS_DASHBOARD_STRATEGY:
         _LOGGER.debug(
-            "Skipping Lovelace dashboard auto-creation; strategies not supported in this Home Assistant version"
+            "Lovelace strategies unavailable; generating storage-mode dashboard for %s",
+            entry.entry_id,
         )
-        return
+        try:
+            from .dashboard import HeatingControlDashboardStrategy
+
+            strategy = HeatingControlDashboardStrategy(
+                hass, {"entry_id": entry.entry_id}
+            )
+            generated_config = await strategy.async_generate()
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.warning(
+                "Failed to generate fallback dashboard for entry %s: %s",
+                entry.entry_id,
+                err,
+            )
+            return
+        if not isinstance(generated_config, dict) or "views" not in generated_config:
+            _LOGGER.warning(
+                "Generated fallback dashboard invalid for entry %s; skipping",
+                entry.entry_id,
+            )
+            return
 
     dashboard_url = entry.data.get(DASHBOARD_CREATED_KEY)
     url_path = dashboard_url or DASHBOARD_URL_PATH_TEMPLATE.format(
@@ -133,6 +155,7 @@ async def _async_setup_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> Non
             url_path,
             entry.entry_id,
             created_dashboard=dashboard_url is None,
+            generated_config=generated_config,
         )
     except Exception as err:  # pylint: disable=broad-except
         _LOGGER.warning(
@@ -155,10 +178,7 @@ async def _async_setup_frontend(hass: HomeAssistant) -> None:
             "Frontend directory %s is missing; skipping strategy asset registration",
             frontend_dir,
         )
-        hass.data[FRONTEND_REGISTERED_KEY] = True
         return
-
-    hass.data[FRONTEND_REGISTERED_KEY] = True
 
     try:
         await hass.http.async_register_static_paths(
@@ -176,6 +196,8 @@ async def _async_setup_frontend(hass: HomeAssistant) -> None:
     except Exception:  # pylint: disable=broad-except
         hass.data.pop(FRONTEND_REGISTERED_KEY, None)
         raise
+
+    hass.data[FRONTEND_REGISTERED_KEY] = True
 
 
 def _teardown_frontend(hass: HomeAssistant) -> None:
@@ -248,6 +270,7 @@ async def _async_register_lovelace_dashboard(
     entry_id: str,
     *,
     created_dashboard: bool,
+    generated_config: Optional[dict[str, Any]] = None,
 ) -> None:
     """Ensure the auto-created dashboard is registered with Lovelace."""
     from homeassistant.components.lovelace import dashboard as lovelace_dashboard
@@ -343,12 +366,15 @@ async def _async_register_lovelace_dashboard(
         dashboard_store = lovelace_dashboard.LovelaceStorage(hass, dashboard_item)
         lovelace_data.dashboards[url_path] = dashboard_store
 
-    desired_config: dict[str, Any] = {
-        "strategy": {
-            "type": f"custom:{DOMAIN}-smart-heating",
-            "entry_id": entry_id,
+    if generated_config is None:
+        desired_config: dict[str, Any] = {
+            "strategy": {
+                "type": f"custom:{DOMAIN}-smart-heating",
+                "entry_id": entry_id,
+            }
         }
-    }
+    else:
+        desired_config = generated_config
     should_save_config = True
 
     try:
