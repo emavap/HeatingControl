@@ -1,0 +1,30 @@
+set_schedule_enabled:
+  name: Set schedule enabled
+  description: Enable or disable a Heating Control schedule.
+  fields:
+    entry_id:
+      name: Entry ID
+      description: >
+        Optional config entry ID to target when multiple Heating Control entries exist.
+      example: 0f3a2b1c4d56e7890abc123456789def
+      selector:
+        text:
+    schedule_id:
+      name: Schedule ID
+      description: Unique ID of the schedule to update.
+      example: morning_routine
+      selector:
+        text:
+    schedule_name:
+      name: Schedule name
+      description: Human friendly schedule name; used if schedule_id is not provided.
+      example: Morning routine
+      selector:
+        text:
+    schedule_enabled:
+      name: Schedule enabled
+      description: >
+        Set to true to enable the schedule, or false to disable it.
+      required: true
+      selector:
+        boolean:

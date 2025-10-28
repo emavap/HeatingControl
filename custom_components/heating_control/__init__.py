@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Optional
 
 import voluptuous as vol
 
+from homeassistant.components import frontend, websocket_api
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -25,12 +28,18 @@ from .const import (
     SERVICE_SET_SCHEDULE_ENABLED,
 )
 from .coordinator import HeatingControlCoordinator
+from .dashboard import HeatingControlDashboardStrategy
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
 
 SERVICES_REGISTERED_KEY = f"{DOMAIN}_services_registered"
+FRONTEND_REGISTERED_KEY = f"{DOMAIN}_frontend_registered"
+WS_REGISTERED_KEY = f"{DOMAIN}_ws_registered"
+
+FRONTEND_STATIC_PATH = f"/{DOMAIN}-frontend"
+FRONTEND_STRATEGY_SCRIPT = "dashboard-strategy.js"
 
 SET_SCHEDULE_SCHEMA = vol.Schema(
     {
@@ -52,6 +61,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     await _async_register_services(hass)
+    await _async_register_ws_api(hass)
+    await _async_setup_frontend(hass)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -72,6 +83,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry_store.pop(entry.entry_id, None)
             if not entry_store:
                 await _async_unregister_services(hass)
+                _teardown_frontend(hass)
                 hass.data.pop(DOMAIN, None)
 
         # Remove auto-created dashboard (optional - keeps dashboard for user)
@@ -121,6 +133,96 @@ async def _async_setup_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> Non
         )
 
 
+async def _async_setup_frontend(hass: HomeAssistant) -> None:
+    """Expose frontend resources for the dashboard strategy."""
+    if hass.data.get(FRONTEND_REGISTERED_KEY):
+        return
+
+    frontend_dir = Path(__file__).parent / "frontend"
+    if not frontend_dir.exists():
+        _LOGGER.debug(
+            "Frontend directory %s is missing; skipping strategy asset registration",
+            frontend_dir,
+        )
+        hass.data[FRONTEND_REGISTERED_KEY] = True
+        return
+
+    hass.data[FRONTEND_REGISTERED_KEY] = True
+
+    try:
+        await hass.http.async_register_static_paths(
+            [
+                StaticPathConfig(
+                    FRONTEND_STATIC_PATH,
+                    str(frontend_dir),
+                    cache_headers=False,
+                )
+            ]
+        )
+        frontend.add_extra_js_url(
+            hass, f"{FRONTEND_STATIC_PATH}/{FRONTEND_STRATEGY_SCRIPT}"
+        )
+    except Exception:  # pylint: disable=broad-except
+        hass.data.pop(FRONTEND_REGISTERED_KEY, None)
+        raise
+
+
+def _teardown_frontend(hass: HomeAssistant) -> None:
+    """Remove registered frontend resources when no entries remain."""
+    if not hass.data.pop(FRONTEND_REGISTERED_KEY, None):
+        return
+
+    frontend.remove_extra_js_url(
+        hass, f"{FRONTEND_STATIC_PATH}/{FRONTEND_STRATEGY_SCRIPT}"
+    )
+
+
+async def _async_register_ws_api(hass: HomeAssistant) -> None:
+    """Register websocket handlers for dashboard generation."""
+    if hass.data.get(WS_REGISTERED_KEY):
+        return
+
+    hass.data[WS_REGISTERED_KEY] = True
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): f"{DOMAIN}/generate_dashboard",
+            vol.Optional("config", default={}): dict,
+        }
+    )
+    @websocket_api.async_response
+    async def websocket_generate_dashboard(
+        hass: HomeAssistant,
+        connection: websocket_api.ActiveConnection,
+        msg: dict[str, Any],
+    ) -> None:
+        """Return the generated dashboard for the requested config."""
+        config: dict[str, Any] = dict(msg["config"] or {})
+        config.pop("type", None)
+        strategy = HeatingControlDashboardStrategy(hass, config)
+
+        try:
+            dashboard_config = await strategy.async_generate()
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.error(
+                "Failed to generate Heating Control dashboard via websocket: %s",
+                err,
+                exc_info=True,
+            )
+            connection.send_error(
+                msg["id"], "dashboard_generation_failed", str(err)
+            )
+            return
+
+        connection.send_result(msg["id"], dashboard_config)
+
+    try:
+        websocket_api.async_register_command(hass, websocket_generate_dashboard)
+    except Exception:  # pylint: disable=broad-except
+        hass.data.pop(WS_REGISTERED_KEY, None)
+        raise
+
+
 async def _async_register_lovelace_dashboard(
     hass: HomeAssistant,
     url_path: str,
@@ -129,7 +231,6 @@ async def _async_register_lovelace_dashboard(
     created_dashboard: bool,
 ) -> None:
     """Ensure the auto-created dashboard is registered with Lovelace."""
-    from homeassistant.components import frontend
     from homeassistant.components.lovelace import dashboard as lovelace_dashboard
     from homeassistant.components.lovelace import const as lovelace_const
 
@@ -314,8 +415,6 @@ async def _async_remove_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> No
 
 def _remove_dashboard_sync(hass: HomeAssistant, url_path: str) -> None:
     """Remove dashboard file synchronously (runs in executor)."""
-    from pathlib import Path
-
     storage_dir = Path(hass.config.path(".storage"))
     dashboard_file = storage_dir / f"lovelace.{url_path}"
 
