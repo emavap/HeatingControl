@@ -203,25 +203,40 @@ def _create_dashboard_sync(
         "url_path": url_path,
     }
 
-    existing = items.get(url_path)
-    if existing is not None:
-        # Update existing entry if any values differ
+    dashboard_id = f"{DOMAIN}_{entry_id[:8]}"
+    existing_id: Optional[str] = None
+
+    for item_id, item in items.items():
+        if item.get("filename") == desired["filename"] or item.get("url_path") == url_path:
+            existing_id = item_id
+            break
+
+    changed = False
+    new_entry = False
+    if existing_id:
+        existing = items[existing_id]
         if any(existing.get(k) != v for k, v in desired.items()):
             existing.update(desired)
-            with dashboards_file.open("w", encoding="utf-8") as f:
-                json.dump(dashboards_data, f, indent=2)
-            _LOGGER.debug(
-                "Updated dashboard '%s' registration in lovelace_dashboards", url_path
-            )
-        else:
-            _LOGGER.debug(
-                "Dashboard '%s' already registered in lovelace_dashboards", url_path
-            )
+            changed = True
     else:
-        items[url_path] = desired
+        # Use stable identifier so we can find/update on subsequent runs
+        items[dashboard_id] = desired
+        existing_id = dashboard_id
+        changed = True
+        new_entry = True
+
+    if changed:
         with dashboards_file.open("w", encoding="utf-8") as f:
             json.dump(dashboards_data, f, indent=2)
-        _LOGGER.debug("Registered dashboard '%s' in lovelace_dashboards", url_path)
+        _LOGGER.debug(
+            "%s dashboard '%s' in lovelace_dashboards",
+            "Registered" if new_entry else "Updated",
+            url_path,
+        )
+    else:
+        _LOGGER.debug(
+            "Dashboard '%s' already registered in lovelace_dashboards", url_path
+        )
 
 
 async def _async_remove_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> None:
