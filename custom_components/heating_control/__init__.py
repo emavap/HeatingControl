@@ -193,25 +193,35 @@ def _create_dashboard_sync(
 
     items = dashboards_data.setdefault("data", {}).setdefault("items", {})
 
-    if url_path in items:
-        _LOGGER.debug(
-            "Dashboard '%s' already registered in lovelace_dashboards", url_path
-        )
-        return
-
-    items[url_path] = {
+    desired = {
         "mode": "storage",
         "filename": f"lovelace.{url_path}",
         "title": DASHBOARD_TITLE,
         "icon": DASHBOARD_ICON,
         "show_in_sidebar": True,
         "require_admin": False,
+        "url_path": url_path,
     }
 
-    with dashboards_file.open("w", encoding="utf-8") as f:
-        json.dump(dashboards_data, f, indent=2)
-
-    _LOGGER.debug("Registered dashboard '%s' in lovelace_dashboards", url_path)
+    existing = items.get(url_path)
+    if existing is not None:
+        # Update existing entry if any values differ
+        if any(existing.get(k) != v for k, v in desired.items()):
+            existing.update(desired)
+            with dashboards_file.open("w", encoding="utf-8") as f:
+                json.dump(dashboards_data, f, indent=2)
+            _LOGGER.debug(
+                "Updated dashboard '%s' registration in lovelace_dashboards", url_path
+            )
+        else:
+            _LOGGER.debug(
+                "Dashboard '%s' already registered in lovelace_dashboards", url_path
+            )
+    else:
+        items[url_path] = desired
+        with dashboards_file.open("w", encoding="utf-8") as f:
+            json.dump(dashboards_data, f, indent=2)
+        _LOGGER.debug("Registered dashboard '%s' in lovelace_dashboards", url_path)
 
 
 async def _async_remove_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> None:
