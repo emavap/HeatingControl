@@ -1,10 +1,15 @@
 """Dynamic Lovelace dashboard strategy for Heating Control."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
-from homeassistant.components.lovelace.strategy import Strategy
+try:
+    from homeassistant.components.lovelace.strategy import Strategy as LovelaceStrategy
+except ImportError:  # Home Assistant version without Lovelace strategies support
+    LovelaceStrategy = None
+
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import slugify
 
 from .const import (
@@ -15,9 +20,37 @@ from .const import (
     SCHEDULE_SWITCH_ENTITY_TEMPLATE,
 )
 
+if TYPE_CHECKING:
+    from homeassistant.components.lovelace.strategy import Strategy as StrategyType
+
+if LovelaceStrategy is not None:
+    Strategy: type[StrategyType] = LovelaceStrategy
+    SUPPORTS_DASHBOARD_STRATEGY = True
+else:
+    SUPPORTS_DASHBOARD_STRATEGY = False
+
+    class Strategy:  # type: ignore[misc]
+        """Fallback base strategy for Home Assistant versions without native support."""
+
+        def __init__(
+            self, hass: HomeAssistant, config: Optional[dict[str, Any]] = None
+        ) -> None:
+            self.hass = hass
+            self.config: dict[str, Any] = config or {}
+
+        async def async_generate(self) -> Dict[str, Any]:
+            """Raise as strategies are unsupported in this HA version."""
+            raise NotImplementedError(
+                "Lovelace dashboard strategies are not supported by this Home Assistant version"
+            )
+
 
 async def async_get_strategy(hass: HomeAssistant, config: dict[str, Any]) -> Strategy:
     """Return a Heating Control dashboard strategy instance."""
+    if not SUPPORTS_DASHBOARD_STRATEGY:
+        raise HomeAssistantError(
+            "Lovelace dashboard strategies are not supported by this Home Assistant version"
+        )
     return HeatingControlDashboardStrategy(hass, config)
 
 

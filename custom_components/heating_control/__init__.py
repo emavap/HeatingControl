@@ -28,7 +28,7 @@ from .const import (
     SERVICE_SET_SCHEDULE_ENABLED,
 )
 from .coordinator import HeatingControlCoordinator
-from .dashboard import HeatingControlDashboardStrategy
+from .dashboard import SUPPORTS_DASHBOARD_STRATEGY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,8 +61,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     await _async_register_services(hass)
-    await _async_register_ws_api(hass)
-    await _async_setup_frontend(hass)
+    if SUPPORTS_DASHBOARD_STRATEGY:
+        await _async_register_ws_api(hass)
+        await _async_setup_frontend(hass)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -83,7 +84,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry_store.pop(entry.entry_id, None)
             if not entry_store:
                 await _async_unregister_services(hass)
-                _teardown_frontend(hass)
+                if SUPPORTS_DASHBOARD_STRATEGY:
+                    _teardown_frontend(hass)
                 hass.data.pop(DOMAIN, None)
 
         # Remove auto-created dashboard (optional - keeps dashboard for user)
@@ -101,6 +103,12 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def _async_setup_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Auto-create a dashboard for easy access to heating controls."""
+    if not SUPPORTS_DASHBOARD_STRATEGY:
+        _LOGGER.debug(
+            "Skipping Lovelace dashboard auto-creation; strategies not supported in this Home Assistant version"
+        )
+        return
+
     dashboard_url = entry.data.get(DASHBOARD_CREATED_KEY)
     url_path = dashboard_url or DASHBOARD_URL_PATH_TEMPLATE.format(
         entry_id=entry.entry_id[:8]
@@ -135,6 +143,9 @@ async def _async_setup_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 async def _async_setup_frontend(hass: HomeAssistant) -> None:
     """Expose frontend resources for the dashboard strategy."""
+    if not SUPPORTS_DASHBOARD_STRATEGY:
+        return
+
     if hass.data.get(FRONTEND_REGISTERED_KEY):
         return
 
@@ -169,6 +180,9 @@ async def _async_setup_frontend(hass: HomeAssistant) -> None:
 
 def _teardown_frontend(hass: HomeAssistant) -> None:
     """Remove registered frontend resources when no entries remain."""
+    if not SUPPORTS_DASHBOARD_STRATEGY:
+        return
+
     if not hass.data.pop(FRONTEND_REGISTERED_KEY, None):
         return
 
@@ -179,6 +193,9 @@ def _teardown_frontend(hass: HomeAssistant) -> None:
 
 async def _async_register_ws_api(hass: HomeAssistant) -> None:
     """Register websocket handlers for dashboard generation."""
+    if not SUPPORTS_DASHBOARD_STRATEGY:
+        return
+
     if hass.data.get(WS_REGISTERED_KEY):
         return
 
@@ -199,6 +216,8 @@ async def _async_register_ws_api(hass: HomeAssistant) -> None:
         """Return the generated dashboard for the requested config."""
         config: dict[str, Any] = dict(msg["config"] or {})
         config.pop("type", None)
+        from .dashboard import HeatingControlDashboardStrategy
+
         strategy = HeatingControlDashboardStrategy(hass, config)
 
         try:
