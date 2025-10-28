@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 import voluptuous as vol
 
@@ -89,43 +89,42 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def _async_setup_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Auto-create a dashboard for easy access to heating controls."""
-    # Check if we've already created a dashboard for this entry
     dashboard_url = entry.data.get(DASHBOARD_CREATED_KEY)
-
-    if dashboard_url:
-        # Dashboard already created, don't recreate
-        _LOGGER.debug("Dashboard already exists at %s", dashboard_url)
-        return
-
-    # Generate unique URL path for this entry
-    url_path = DASHBOARD_URL_PATH_TEMPLATE.format(entry_id=entry.entry_id[:8])
+    url_path = dashboard_url or DASHBOARD_URL_PATH_TEMPLATE.format(
+        entry_id=entry.entry_id[:8]
+    )
+    created_file = False
 
     try:
-        # Use Home Assistant's lovelace integration to create dashboard
-        await hass.async_add_executor_job(
-            _create_dashboard_sync,
-            hass,
-            url_path,
-            entry.entry_id,
-        )
+        if not dashboard_url:
+            await hass.async_add_executor_job(
+                _create_dashboard_sync,
+                hass,
+                url_path,
+                entry.entry_id,
+            )
+            created_file = True
 
-        # Store the dashboard URL in entry data
-        hass.config_entries.async_update_entry(
-            entry,
-            data={**entry.data, DASHBOARD_CREATED_KEY: url_path},
-        )
-
-        _LOGGER.info(
-            "Auto-created '%s' dashboard at /%s",
-            DASHBOARD_TITLE,
-            url_path,
-        )
+            hass.config_entries.async_update_entry(
+                entry,
+                data={**entry.data, DASHBOARD_CREATED_KEY: url_path},
+            )
+            _LOGGER.info(
+                "Auto-created '%s' dashboard at /%s",
+                DASHBOARD_TITLE,
+                url_path,
+            )
+        else:
+            _LOGGER.debug("Dashboard already recorded at %s", url_path)
     except Exception as err:  # pylint: disable=broad-except
         # Don't fail setup if dashboard creation fails
         _LOGGER.warning(
             "Failed to auto-create dashboard (non-critical): %s",
             err,
         )
+        return
+
+    await _async_register_lovelace_dashboard(hass, url_path, created_file)
 
 
 def _create_dashboard_sync(
@@ -144,99 +143,167 @@ def _create_dashboard_sync(
     # Check if dashboard file already exists
     if dashboard_file.exists():
         _LOGGER.debug("Dashboard file already exists: %s", dashboard_file)
-    else:
-        # Create dashboard configuration
-        dashboard_config = {
-            "version": 1,
-            "minor_version": 1,
-            "key": url_path,
-            "data": {
-                "config": {
-                    "strategy": {
-                        "type": f"custom:{DOMAIN}-smart-heating",
-                        "entry_id": entry_id,
-                    }
-                },
-                "title": DASHBOARD_TITLE,
-                "icon": DASHBOARD_ICON,
-                "show_in_sidebar": True,
-                "require_admin": False,
-            },
-        }
+        return
 
-        # Write dashboard configuration
-        storage_dir.mkdir(parents=True, exist_ok=True)
-        with dashboard_file.open("w", encoding="utf-8") as f:
-            json.dump(dashboard_config, f, indent=2)
-
-        _LOGGER.debug("Created dashboard file: %s", dashboard_file)
-
-    # Ensure the dashboard is registered so it shows up in the sidebar
-    dashboards_file = storage_dir / "lovelace_dashboards"
-    dashboards_data = {
+    # Create dashboard configuration
+    dashboard_config = {
         "version": 1,
         "minor_version": 1,
-        "key": "lovelace_dashboards",
-        "data": {"items": {}},
+        "key": url_path,
+        "data": {
+            "config": {
+                "strategy": {
+                    "type": f"custom:{DOMAIN}-smart-heating",
+                    "entry_id": entry_id,
+                }
+            },
+            "title": DASHBOARD_TITLE,
+            "icon": DASHBOARD_ICON,
+            "show_in_sidebar": True,
+            "require_admin": False,
+        },
     }
 
-    if dashboards_file.exists():
-        try:
-            with dashboards_file.open("r", encoding="utf-8") as f:
-                dashboards_data = json.load(f)
-        except json.JSONDecodeError as err:
-            _LOGGER.warning(
-                "Failed to read existing lovelace_dashboards file (%s), recreating: %s",
-                dashboards_file,
-                err,
-            )
+    # Write dashboard configuration
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    with dashboard_file.open("w", encoding="utf-8") as f:
+        json.dump(dashboard_config, f, indent=2)
 
-    items = dashboards_data.setdefault("data", {}).setdefault("items", {})
+    _LOGGER.debug("Created dashboard file: %s", dashboard_file)
 
-    desired = {
-        "mode": "storage",
-        "filename": f"lovelace.{url_path}",
-        "title": DASHBOARD_TITLE,
-        "icon": DASHBOARD_ICON,
-        "show_in_sidebar": True,
-        "require_admin": False,
-        "url_path": url_path,
-    }
 
-    dashboard_id = f"{DOMAIN}_{entry_id[:8]}"
-    existing_id: Optional[str] = None
+async def _async_register_lovelace_dashboard(
+    hass: HomeAssistant, url_path: str, created_file: bool
+) -> None:
+    """Ensure the auto-created dashboard is registered with Lovelace."""
+    from homeassistant.components import frontend
+    from homeassistant.components.lovelace import dashboard as lovelace_dashboard
+    from homeassistant.components.lovelace import const as lovelace_const
 
-    for item_id, item in items.items():
-        if item.get("filename") == desired["filename"] or item.get("url_path") == url_path:
-            existing_id = item_id
-            break
-
-    changed = False
-    new_entry = False
-    if existing_id:
-        existing = items[existing_id]
-        if any(existing.get(k) != v for k, v in desired.items()):
-            existing.update(desired)
-            changed = True
-    else:
-        # Use stable identifier so we can find/update on subsequent runs
-        items[dashboard_id] = desired
-        existing_id = dashboard_id
-        changed = True
-        new_entry = True
-
-    if changed:
-        with dashboards_file.open("w", encoding="utf-8") as f:
-            json.dump(dashboards_data, f, indent=2)
+    lovelace_data = hass.data.get(lovelace_const.LOVELACE_DATA)
+    if lovelace_data is None:
         _LOGGER.debug(
-            "%s dashboard '%s' in lovelace_dashboards",
-            "Registered" if new_entry else "Updated",
+            "Lovelace not initialised; skipping dashboard registration for %s",
             url_path,
         )
-    else:
-        _LOGGER.debug(
-            "Dashboard '%s' already registered in lovelace_dashboards", url_path
+        return
+
+    try:
+        dashboards_collection = lovelace_dashboard.DashboardsCollection(hass)
+        await dashboards_collection.async_load()
+    except Exception as err:  # pylint: disable=broad-except
+        _LOGGER.warning(
+            "Unable to load Lovelace dashboards; skipping auto-registration: %s",
+            err,
         )
+        return
+
+    desired_fields = {
+        lovelace_const.CONF_TITLE: DASHBOARD_TITLE,
+        lovelace_const.CONF_ICON: DASHBOARD_ICON,
+        lovelace_const.CONF_SHOW_IN_SIDEBAR: True,
+        lovelace_const.CONF_REQUIRE_ADMIN: False,
+    }
+
+    dashboard_item: Optional[dict[str, Any]] = None
+    for item in dashboards_collection.data.values():
+        if item.get(lovelace_const.CONF_URL_PATH) == url_path:
+            dashboard_item = item
+            break
+
+    if dashboard_item is None:
+        try:
+            dashboard_item = await dashboards_collection.async_create_item(
+                {
+                    lovelace_const.CONF_URL_PATH: url_path,
+                    lovelace_const.CONF_TITLE: DASHBOARD_TITLE,
+                    lovelace_const.CONF_ICON: DASHBOARD_ICON,
+                    lovelace_const.CONF_SHOW_IN_SIDEBAR: True,
+                    lovelace_const.CONF_REQUIRE_ADMIN: False,
+                    lovelace_const.CONF_ALLOW_SINGLE_WORD: True,
+                }
+            )
+            _LOGGER.debug("Created Lovelace dashboard entry for %s", url_path)
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.warning(
+                "Could not create Lovelace dashboard entry for %s: %s",
+                url_path,
+                err,
+            )
+            return
+        update_panel = False
+    else:
+        updates: dict[str, Any] = {
+            key: value
+            for key, value in desired_fields.items()
+            if dashboard_item.get(key) != value
+        }
+        update_panel = True
+
+        if updates:
+            try:
+                dashboard_item = await dashboards_collection.async_update_item(
+                    dashboard_item["id"], updates
+                )
+                _LOGGER.debug(
+                    "Updated Lovelace dashboard metadata for %s with %s",
+                    url_path,
+                    updates,
+                )
+            except Exception as err:  # pylint: disable=broad-except
+                _LOGGER.warning(
+                    "Could not update Lovelace dashboard entry for %s: %s",
+                    url_path,
+                    err,
+                )
+
+    if dashboard_item is None:
+        return
+
+    existing_dashboard = lovelace_data.dashboards.get(url_path)
+    if existing_dashboard:
+        existing_dashboard.config = dashboard_item
+    else:
+        lovelace_data.dashboards[url_path] = lovelace_dashboard.LovelaceStorage(
+            hass, dashboard_item
+        )
+        update_panel = False
+
+    panel_kwargs = {
+        "frontend_url_path": url_path,
+        "require_admin": dashboard_item.get(
+            lovelace_const.CONF_REQUIRE_ADMIN, False
+        ),
+        "config": {"mode": lovelace_const.MODE_STORAGE},
+        "update": update_panel,
+    }
+
+    if dashboard_item.get(lovelace_const.CONF_SHOW_IN_SIDEBAR, True):
+        panel_kwargs["sidebar_title"] = dashboard_item.get(
+            lovelace_const.CONF_TITLE, DASHBOARD_TITLE
+        )
+        panel_kwargs["sidebar_icon"] = dashboard_item.get(
+            lovelace_const.CONF_ICON, DASHBOARD_ICON
+        )
+
+    try:
+        frontend.async_register_built_in_panel(
+            hass,
+            lovelace_const.DOMAIN,
+            **panel_kwargs,
+        )
+    except ValueError as err:
+        _LOGGER.debug(
+            "Panel registration skipped for %s (likely already registered): %s",
+            url_path,
+            err,
+        )
+        return
+
+    if created_file:
+        _LOGGER.info("Registered Lovelace dashboard at /%s", url_path)
+    else:
+        _LOGGER.debug("Ensured Lovelace dashboard is registered at /%s", url_path)
 
 
 async def _async_remove_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> None:
