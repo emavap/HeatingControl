@@ -226,7 +226,7 @@ class HeatingControlDashboardStrategy(Strategy):
             },
             {
                 "entity": "binary_sensor.heating_control_both_away",
-                "name": "Both residents away",
+                "name": "Residents away",
             },
         ]
 
@@ -323,7 +323,20 @@ class HeatingControlDashboardStrategy(Strategy):
 
         for decision in snapshot.schedule_decisions.values():
             switch_entity = self._schedule_switch_entity(entry_id, decision.schedule_id)
-            label = self._format_schedule_label(decision)
+
+            display_name = decision.name
+            if decision.always_active:
+                time_caption = "Always active"
+            else:
+                time_caption = f"{decision.start_time} → {decision.end_time}"
+
+            detail_label = self._format_schedule_label(decision)
+            if decision.always_active:
+                label = detail_label or time_caption
+            else:
+                label = time_caption
+                if detail_label:
+                    label = f"{time_caption} • {detail_label}"
 
             if decision.is_active:
                 icon = "mdi:calendar-star"
@@ -348,7 +361,7 @@ class HeatingControlDashboardStrategy(Strategy):
                 {
                     "type": "button",
                     "entity": switch_entity,
-                    "name": decision.name,
+                    "name": display_name,
                     "icon": icon,
                     "icon_color": icon_color,
                     "badge": badge,
@@ -356,7 +369,15 @@ class HeatingControlDashboardStrategy(Strategy):
                     "badge_color": badge_color,
                     "show_state": False,
                     "label": label,
-                    "tap_action": {"action": "toggle"},
+                    "tap_action": {
+                        "action": "call-service",
+                        "service": "heating_control.set_schedule_enabled",
+                        "data": {
+                            "entry_id": entry_id,
+                            "schedule_id": decision.schedule_id,
+                            "schedule_enabled": not decision.enabled,
+                        },
+                    },
                     "hold_action": {
                         "action": "more-info",
                         "entity": self._schedule_binary_entity(decision.name),
@@ -387,7 +408,8 @@ class HeatingControlDashboardStrategy(Strategy):
         if decision.always_active:
             parts.append("Always active")
         else:
-            parts.append(f"{decision.start_time} → {decision.end_time}")
+            window_status = "Window open" if decision.in_time_window else "Window closed"
+            parts.append(window_status)
 
         if decision.only_when_home:
             parts.append("Home required")
