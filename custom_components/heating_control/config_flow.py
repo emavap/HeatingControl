@@ -19,6 +19,7 @@ from .const import (
     CONF_GAS_HEATER_ENTITY,
     CONF_ONLY_SCHEDULED_ACTIVE,
     CONF_SCHEDULES,
+    CONF_SCHEDULE_ID,
     CONF_SCHEDULE_NAME,
     CONF_SCHEDULE_ENABLED,
     CONF_SCHEDULE_START,
@@ -55,10 +56,13 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     def __init__(self):
-        """Initialize the config flow."""
-        self._schedules = []
-        self._global_config = {}
-        self._available_devices = []
+        """Initialize the config flow state containers."""
+        # In-progress schedules gathered before creating the entry
+        self._pending_schedules: list[dict[str, Any]] = []
+        # Global integration settings from the initial step
+        self._global_settings: dict[str, Any] = {}
+        # Climate devices chosen for Heating Control management
+        self._selected_climate_entities: list[str] = []
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -67,13 +71,13 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            self._global_config = {
+            self._global_settings = {
                 **user_input,
                 CONF_DEVICE_TRACKERS: list(user_input.get(CONF_DEVICE_TRACKERS, [])),
             }
             return await self.async_step_select_devices()
 
-        default_trackers = _extract_trackers(self._global_config)
+        default_trackers = _extract_trackers(self._global_settings)
 
         data_schema = vol.Schema(
             {
@@ -105,8 +109,8 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            self._available_devices = user_input.get(CONF_CLIMATE_DEVICES, [])
-            if not self._available_devices:
+            self._selected_climate_entities = user_input.get(CONF_CLIMATE_DEVICES, [])
+            if not self._selected_climate_entities:
                 errors["base"] = "no_devices"
             else:
                 return await self.async_step_add_schedule()
@@ -143,9 +147,9 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured()
 
                 config_data = {
-                    **self._global_config,
-                    CONF_CLIMATE_DEVICES: self._available_devices,
-                    CONF_SCHEDULES: self._schedules,
+                    **self._global_settings,
+                    CONF_CLIMATE_DEVICES: self._selected_climate_entities,
+                    CONF_SCHEDULES: self._pending_schedules,
                 }
                 return self.async_create_entry(title="Heating Control", data=config_data)
 
@@ -155,10 +159,10 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
-        description = f"Schedules configured: {len(self._schedules)}\n\n"
-        if self._schedules:
+        description = f"Schedules configured: {len(self._pending_schedules)}\n\n"
+        if self._pending_schedules:
             description += "Schedules:\n"
-            for schedule in self._schedules:
+            for schedule in self._pending_schedules:
                 name = schedule.get(CONF_SCHEDULE_NAME, "Unnamed")
                 start = schedule.get(CONF_SCHEDULE_START, "")
                 end = schedule.get(CONF_SCHEDULE_END, "")
@@ -182,7 +186,7 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             schedule_config = {
-                "id": str(uuid.uuid4()),
+                CONF_SCHEDULE_ID: str(uuid.uuid4()),
                 CONF_SCHEDULE_NAME: user_input[CONF_SCHEDULE_NAME],
                 CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
                 CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
@@ -194,11 +198,11 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
                 CONF_SCHEDULE_FAN_MODE: user_input.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE),
             }
-            self._schedules.append(schedule_config)
+            self._pending_schedules.append(schedule_config)
             return await self.async_step_add_schedule()
 
         # Create device options from available devices
-        device_options = [{"label": device, "value": device} for device in self._available_devices]
+        device_options = [{"label": device, "value": device} for device in self._selected_climate_entities]
 
         data_schema = vol.Schema(
             {
@@ -248,10 +252,14 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
         self.config_entry = config_entry
-        self._schedules = []
-        self._global_config = {}
-        self._available_devices = []
-        self._schedule_index = None
+        # Mutable copy of current schedules shown in the options flow
+        self._pending_schedules: list[dict[str, Any]] = []
+        # Updated global settings staged during the options flow
+        self._global_settings: dict[str, Any] = {}
+        # Snapshot of the climate devices selection
+        self._selected_climate_entities: list[str] = []
+        # Index of the schedule currently being edited (if any)
+        self._active_schedule_index: int | None = None
 
     def _build_schedule_options(self) -> list[dict[str, str]]:
         """Build schedule selector options for edit/delete operations."""
@@ -262,7 +270,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                          f"{schedule.get(CONF_SCHEDULE_END, '')})",
                 "value": str(idx)
             }
-            for idx, schedule in enumerate(self._schedules)
+            for idx, schedule in enumerate(self._pending_schedules)
         ]
 
     async def async_step_init(
@@ -270,7 +278,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Manage the options - global settings."""
         if user_input is not None:
-            self._global_config = {
+            self._global_settings = {
                 **user_input,
                 CONF_DEVICE_TRACKERS: list(user_input.get(CONF_DEVICE_TRACKERS, [])),
             }
@@ -313,7 +321,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         current_config = self.config_entry.options or self.config_entry.data
 
         if user_input is not None:
-            self._available_devices = user_input.get(CONF_CLIMATE_DEVICES, [])
+            self._selected_climate_entities = user_input.get(CONF_CLIMATE_DEVICES, [])
             return await self.async_step_manage_schedules()
 
         data_schema = vol.Schema(
@@ -335,8 +343,8 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         """Manage schedules."""
         current_config = self.config_entry.options or self.config_entry.data
 
-        if not self._schedules:
-            self._schedules = list(current_config.get(CONF_SCHEDULES, []))
+        if not self._pending_schedules:
+            self._pending_schedules = list(current_config.get(CONF_SCHEDULES, []))
 
         if user_input is not None:
             action = user_input.get("action")
@@ -349,15 +357,15 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_select_schedule_to_delete()
             elif action == "done":
                 config_data = {
-                    **self._global_config,
-                    CONF_CLIMATE_DEVICES: self._available_devices,
-                    CONF_SCHEDULES: self._schedules,
+                    **self._global_settings,
+                    CONF_CLIMATE_DEVICES: self._selected_climate_entities,
+                    CONF_SCHEDULES: self._pending_schedules,
                 }
                 return self.async_create_entry(title="", data=config_data)
 
         schedule_list = "Schedules:\n\n"
-        if self._schedules:
-            for idx, schedule in enumerate(self._schedules):
+        if self._pending_schedules:
+            for idx, schedule in enumerate(self._pending_schedules):
                 name = schedule.get(CONF_SCHEDULE_NAME, "Unnamed")
                 start = schedule.get(CONF_SCHEDULE_START, "")
                 end = schedule.get(CONF_SCHEDULE_END, "")
@@ -370,7 +378,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
 
         # Build action options based on whether schedules exist
         action_options = [{"label": "Add Schedule", "value": "add"}]
-        if self._schedules:
+        if self._pending_schedules:
             action_options.extend([
                 {"label": "Edit Schedule", "value": "edit"},
                 {"label": "Delete Schedule", "value": "delete"},
@@ -400,7 +408,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         """Add a schedule."""
         if user_input is not None:
             schedule_config = {
-                "id": str(uuid.uuid4()),
+                CONF_SCHEDULE_ID: str(uuid.uuid4()),
                 CONF_SCHEDULE_NAME: user_input[CONF_SCHEDULE_NAME],
                 CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
                 CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
@@ -412,10 +420,10 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                 CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
                 CONF_SCHEDULE_FAN_MODE: user_input.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE),
             }
-            self._schedules.append(schedule_config)
+            self._pending_schedules.append(schedule_config)
             return await self.async_step_manage_schedules()
 
-        device_options = [{"label": device, "value": device} for device in self._available_devices]
+        device_options = [{"label": device, "value": device} for device in self._selected_climate_entities]
 
         data_schema = vol.Schema(
             {
@@ -447,13 +455,13 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Select which schedule to edit."""
         # Guard: Ensure schedules exist
-        if not self._schedules:
+        if not self._pending_schedules:
             _LOGGER.warning("Attempted to edit schedule but no schedules available")
             return await self.async_step_manage_schedules()
 
         if user_input is not None:
             try:
-                self._schedule_index = int(user_input.get("schedule_index"))
+                self._active_schedule_index = int(user_input.get("schedule_index"))
                 return await self.async_step_edit_schedule()
             except (ValueError, TypeError) as err:
                 _LOGGER.error("Invalid schedule index selected: %s", err)
@@ -484,17 +492,17 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Edit an existing schedule."""
         # Validate index bounds
-        if self._schedule_index is None or not (0 <= self._schedule_index < len(self._schedules)):
+        if self._active_schedule_index is None or not (0 <= self._active_schedule_index < len(self._pending_schedules)):
             _LOGGER.error("Invalid schedule index for edit: %s (total: %d)",
-                         self._schedule_index, len(self._schedules))
-            self._schedule_index = None
+                         self._active_schedule_index, len(self._pending_schedules))
+            self._active_schedule_index = None
             return await self.async_step_manage_schedules()
 
         if user_input is not None:
             try:
                 # Update the schedule at the stored index
                 schedule_config = {
-                    "id": self._schedules[self._schedule_index].get("id", str(uuid.uuid4())),
+                    CONF_SCHEDULE_ID: self._pending_schedules[self._active_schedule_index].get(CONF_SCHEDULE_ID, str(uuid.uuid4())),
                     CONF_SCHEDULE_NAME: user_input[CONF_SCHEDULE_NAME],
                     CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
                     CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
@@ -506,17 +514,17 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                     CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
                     CONF_SCHEDULE_FAN_MODE: user_input.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE),
                 }
-                self._schedules[self._schedule_index] = schedule_config
-                self._schedule_index = None
+                self._pending_schedules[self._active_schedule_index] = schedule_config
+                self._active_schedule_index = None
                 return await self.async_step_manage_schedules()
             except (IndexError, KeyError) as err:
                 _LOGGER.error("Error updating schedule: %s", err)
-                self._schedule_index = None
+                self._active_schedule_index = None
                 return await self.async_step_manage_schedules()
 
         # Get current schedule data
-        current_schedule = self._schedules[self._schedule_index]
-        device_options = [{"label": device, "value": device} for device in self._available_devices]
+        current_schedule = self._pending_schedules[self._active_schedule_index]
+        device_options = [{"label": device, "value": device} for device in self._selected_climate_entities]
 
         data_schema = vol.Schema(
             {
@@ -584,13 +592,13 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Select which schedule to delete."""
         # Guard: Ensure schedules exist
-        if not self._schedules:
+        if not self._pending_schedules:
             _LOGGER.warning("Attempted to delete schedule but no schedules available")
             return await self.async_step_manage_schedules()
 
         if user_input is not None:
             try:
-                self._schedule_index = int(user_input.get("schedule_index"))
+                self._active_schedule_index = int(user_input.get("schedule_index"))
                 return await self.async_step_confirm_delete()
             except (ValueError, TypeError) as err:
                 _LOGGER.error("Invalid schedule index selected: %s", err)
@@ -621,13 +629,13 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Confirm deletion of a schedule."""
         # Validate index bounds
-        if self._schedule_index is None or not (0 <= self._schedule_index < len(self._schedules)):
+        if self._active_schedule_index is None or not (0 <= self._active_schedule_index < len(self._pending_schedules)):
             _LOGGER.error("Invalid schedule index for delete: %s (total: %d)",
-                         self._schedule_index, len(self._schedules))
-            self._schedule_index = None
+                         self._active_schedule_index, len(self._pending_schedules))
+            self._active_schedule_index = None
             return await self.async_step_manage_schedules()
 
-        schedule_to_delete = self._schedules[self._schedule_index]
+        schedule_to_delete = self._pending_schedules[self._active_schedule_index]
         schedule_name = schedule_to_delete.get(CONF_SCHEDULE_NAME, "Unnamed")
 
         if user_input is not None:
@@ -636,15 +644,15 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                 try:
                     # Delete the schedule
                     _LOGGER.info("Deleting schedule: %s", schedule_name)
-                    del self._schedules[self._schedule_index]
-                    self._schedule_index = None
+                    del self._pending_schedules[self._active_schedule_index]
+                    self._active_schedule_index = None
                 except IndexError as err:
                     _LOGGER.error("Error deleting schedule: %s", err)
-                    self._schedule_index = None
+                    self._active_schedule_index = None
             else:
                 # Cancel deletion
                 _LOGGER.debug("Schedule deletion cancelled: %s", schedule_name)
-                self._schedule_index = None
+                self._active_schedule_index = None
             return await self.async_step_manage_schedules()
 
         # Use select dropdown for better UX instead of boolean toggle

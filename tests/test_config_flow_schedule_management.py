@@ -164,7 +164,7 @@ def test_build_schedule_options_with_schedules(mock_config_entry):
         in the Home Assistant config flow dropdown.
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
 
     options = flow._build_schedule_options()
 
@@ -204,7 +204,7 @@ def test_build_schedule_options_empty_list(mock_config_entry):
         programming requires handling it gracefully if it occurs.
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = []
+    flow._pending_schedules = []
 
     options = flow._build_schedule_options()
 
@@ -241,8 +241,8 @@ async def test_select_schedule_to_edit_shows_list(mock_config_entry):
         → This step displays the list of editable schedules
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
-    flow._available_devices = ["climate.bedroom", "climate.living_room"]
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._selected_climate_entities = ["climate.bedroom", "climate.living_room"]
 
     result = await flow.async_step_select_schedule_to_edit(user_input=None)
 
@@ -278,8 +278,8 @@ async def test_select_schedule_to_edit_with_empty_list(mock_config_entry, caplog
         return to menu where user can add schedules.
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = []
-    flow._available_devices = ["climate.bedroom"]
+    flow._pending_schedules = []
+    flow._selected_climate_entities = ["climate.bedroom"]
 
     result = await flow.async_step_select_schedule_to_edit(user_input=None)
 
@@ -300,7 +300,7 @@ async def test_edit_schedule_valid_index(mock_config_entry):
 
     Setup:
         - Create OptionsFlow with 3 schedules
-        - Set _schedule_index to 1 (editing "Evening" schedule)
+        - Set _active_schedule_index to 1 (editing "Evening" schedule)
 
     Action:
         - Call async_step_edit_schedule with no user input
@@ -313,7 +313,7 @@ async def test_edit_schedule_valid_index(mock_config_entry):
 
     User Flow Context:
         User selects "Evening" from the list
-        → async_step_select_schedule_to_edit sets _schedule_index = 1
+        → async_step_select_schedule_to_edit sets _active_schedule_index = 1
         → This step shows the edit form pre-filled with Evening data
 
     Implementation Note:
@@ -321,9 +321,9 @@ async def test_edit_schedule_valid_index(mock_config_entry):
         existing schedule configuration.
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
-    flow._available_devices = ["climate.bedroom", "climate.living_room"]
-    flow._schedule_index = 1  # Edit "Evening" schedule
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._selected_climate_entities = ["climate.bedroom", "climate.living_room"]
+    flow._active_active_schedule_index = 1  # Edit "Evening" schedule
 
     result = await flow.async_step_edit_schedule(user_input=None)
 
@@ -341,14 +341,14 @@ async def test_edit_schedule_invalid_index_returns_to_menu(mock_config_entry, ca
 
     Setup:
         - Create OptionsFlow with 3 schedules (indices 0-2 valid)
-        - Set _schedule_index to 10 (out of bounds)
+        - Set _active_schedule_index to 10 (out of bounds)
 
     Action:
         - Call async_step_edit_schedule
 
     Assertions:
         - Returns to manage_schedules step (doesn't crash)
-        - Resets _schedule_index to None (clean state)
+        - Resets _active_schedule_index to None (clean state)
         - Logs error with index details for debugging
 
     Error Scenarios Covered:
@@ -363,9 +363,9 @@ async def test_edit_schedule_invalid_index_returns_to_menu(mock_config_entry, ca
         without crashing the integration.
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
-    flow._available_devices = ["climate.bedroom"]
-    flow._schedule_index = 10  # Invalid - only 0-2 exist
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._selected_climate_entities = ["climate.bedroom"]
+    flow._active_active_schedule_index = 10  # Invalid - only 0-2 exist
 
     result = await flow.async_step_edit_schedule(user_input=None)
 
@@ -374,7 +374,7 @@ async def test_edit_schedule_invalid_index_returns_to_menu(mock_config_entry, ca
     assert result["step_id"] == "manage_schedules"
 
     # Should reset index
-    assert flow._schedule_index is None
+    assert flow._active_active_schedule_index is None
 
     # Should log error
     assert "invalid schedule index" in caplog.text.lower()
@@ -389,7 +389,7 @@ async def test_edit_schedule_saves_changes(mock_config_entry):
 
     Setup:
         - Create OptionsFlow with 3 schedules
-        - Set _schedule_index to 0 (editing "Morning")
+        - Set _active_schedule_index to 0 (editing "Morning")
 
     Action:
         - Submit edit form with modified values:
@@ -401,7 +401,7 @@ async def test_edit_schedule_saves_changes(mock_config_entry):
         - Returns to manage_schedules step (edit complete)
         - Schedule at index 0 is updated with new values
         - Schedule ID is preserved (important for sensors)
-        - _schedule_index is reset to None
+        - _active_schedule_index is reset to None
 
     Data Flow:
         User modifies form → Submit → Update _schedules[index]
@@ -413,10 +413,10 @@ async def test_edit_schedule_saves_changes(mock_config_entry):
         user-configurable fields are updated.
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
-    flow._available_devices = ["climate.bedroom", "climate.living_room"]
-    flow._schedule_index = 0  # Edit "Morning" schedule
-    flow._global_config = {}
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._selected_climate_entities = ["climate.bedroom", "climate.living_room"]
+    flow._active_active_schedule_index = 0  # Edit "Morning" schedule
+    flow._global_settings = {}
 
     # User submits edited schedule
     user_input = {
@@ -439,7 +439,7 @@ async def test_edit_schedule_saves_changes(mock_config_entry):
     assert result["step_id"] == "manage_schedules"
 
     # Schedule should be updated
-    updated_schedule = flow._schedules[0]
+    updated_schedule = flow._pending_schedules[0]
     assert updated_schedule[CONF_SCHEDULE_NAME] == "Early Morning"
     assert updated_schedule[CONF_SCHEDULE_TEMPERATURE] == 23.0
     assert updated_schedule[CONF_SCHEDULE_START] == "06:00"
@@ -449,7 +449,7 @@ async def test_edit_schedule_saves_changes(mock_config_entry):
     assert updated_schedule["id"] == "schedule-1"
 
     # Index should be reset
-    assert flow._schedule_index is None
+    assert flow._active_active_schedule_index is None
 
 
 # ============================================================================
@@ -480,7 +480,7 @@ async def test_select_schedule_to_delete_shows_list(mock_config_entry):
         → This step displays the list of deletable schedules
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
 
     result = await flow.async_step_select_schedule_to_delete(user_input=None)
 
@@ -511,7 +511,7 @@ async def test_select_schedule_to_delete_empty_list(mock_config_entry, caplog):
         edge cases and race conditions.
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = []
+    flow._pending_schedules = []
 
     result = await flow.async_step_select_schedule_to_delete(user_input=None)
 
@@ -529,7 +529,7 @@ async def test_confirm_delete_shows_confirmation(mock_config_entry):
 
     Setup:
         - Create OptionsFlow with 3 schedules
-        - Set _schedule_index to 2 (deleting "Night")
+        - Set _active_schedule_index to 2 (deleting "Night")
 
     Action:
         - Call async_step_confirm_delete with no user input
@@ -551,8 +551,8 @@ async def test_confirm_delete_shows_confirmation(mock_config_entry):
         - "🗑️ Yes, delete 'Night'" (explicit, with emoji)
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
-    flow._schedule_index = 2  # "Night" schedule
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._active_active_schedule_index = 2  # "Night" schedule
 
     result = await flow.async_step_confirm_delete(user_input=None)
 
@@ -576,7 +576,7 @@ async def test_confirm_delete_cancellation(mock_config_entry, caplog):
 
     Setup:
         - Create OptionsFlow with 3 schedules
-        - Set _schedule_index to 1 (user selected "Evening")
+        - Set _active_schedule_index to 1 (user selected "Evening")
 
     Action:
         - Submit confirmation form with action="cancel"
@@ -584,7 +584,7 @@ async def test_confirm_delete_cancellation(mock_config_entry, caplog):
     Assertions:
         - Returns to manage_schedules step
         - _schedules still contains all 3 schedules (nothing deleted)
-        - _schedule_index is reset to None
+        - _active_schedule_index is reset to None
         - Logs debug message about cancellation
 
     User Flow:
@@ -592,9 +592,9 @@ async def test_confirm_delete_cancellation(mock_config_entry, caplog):
         → Clicks "Cancel" → Returns to menu, Evening still exists
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
-    flow._schedule_index = 1
-    flow._global_config = {}
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._active_active_schedule_index = 1
+    flow._global_settings = {}
 
     user_input = {"action": "cancel"}
     result = await flow.async_step_confirm_delete(user_input=user_input)
@@ -604,11 +604,11 @@ async def test_confirm_delete_cancellation(mock_config_entry, caplog):
     assert result["step_id"] == "manage_schedules"
 
     # Should NOT delete schedule
-    assert len(flow._schedules) == 3
-    assert flow._schedules[1][CONF_SCHEDULE_NAME] == "Evening"
+    assert len(flow._pending_schedules) == 3
+    assert flow._pending_schedules[1][CONF_SCHEDULE_NAME] == "Evening"
 
     # Should reset index
-    assert flow._schedule_index is None
+    assert flow._active_active_schedule_index is None
 
     # Note: Log capture requires specific log level configuration
     # The actual logging happens but may not be captured in test environment
@@ -623,7 +623,7 @@ async def test_confirm_delete_confirmation(mock_config_entry, caplog):
 
     Setup:
         - Create OptionsFlow with 3 schedules
-        - Set _schedule_index to 1 (deleting "Evening")
+        - Set _active_schedule_index to 1 (deleting "Evening")
 
     Action:
         - Submit confirmation form with action="confirm"
@@ -632,7 +632,7 @@ async def test_confirm_delete_confirmation(mock_config_entry, caplog):
         - Returns to manage_schedules step
         - _schedules now contains only 2 schedules (Evening removed)
         - Remaining schedules are correct (Morning and Night)
-        - _schedule_index is reset to None
+        - _active_schedule_index is reset to None
         - Logs info message about deletion with schedule name
 
     Data Verification:
@@ -645,9 +645,9 @@ async def test_confirm_delete_confirmation(mock_config_entry, caplog):
         explicit "Yes, delete" option in the dropdown.
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
-    flow._schedule_index = 1  # Delete "Evening"
-    flow._global_config = {}
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._active_active_schedule_index = 1  # Delete "Evening"
+    flow._global_settings = {}
 
     user_input = {"action": "confirm"}
     result = await flow.async_step_confirm_delete(user_input=user_input)
@@ -657,12 +657,12 @@ async def test_confirm_delete_confirmation(mock_config_entry, caplog):
     assert result["step_id"] == "manage_schedules"
 
     # Should delete schedule
-    assert len(flow._schedules) == 2
-    assert flow._schedules[0][CONF_SCHEDULE_NAME] == "Morning"
-    assert flow._schedules[1][CONF_SCHEDULE_NAME] == "Night"  # Shifted from index 2 to 1
+    assert len(flow._pending_schedules) == 2
+    assert flow._pending_schedules[0][CONF_SCHEDULE_NAME] == "Morning"
+    assert flow._pending_schedules[1][CONF_SCHEDULE_NAME] == "Night"  # Shifted from index 2 to 1
 
     # Should reset index
-    assert flow._schedule_index is None
+    assert flow._active_active_schedule_index is None
 
     # Note: Log capture requires specific log level configuration
     # The actual logging happens but may not be captured in test environment
@@ -677,7 +677,7 @@ async def test_confirm_delete_invalid_index(mock_config_entry, caplog):
 
     Setup:
         - Create OptionsFlow with 3 schedules
-        - Set _schedule_index to invalid value (None)
+        - Set _active_schedule_index to invalid value (None)
 
     Action:
         - Call async_step_confirm_delete
@@ -685,7 +685,7 @@ async def test_confirm_delete_invalid_index(mock_config_entry, caplog):
     Assertions:
         - Returns to manage_schedules step (doesn't crash)
         - No schedules are deleted (list unchanged)
-        - _schedule_index remains None
+        - _active_schedule_index remains None
         - Logs error with details
 
     Error Scenarios:
@@ -698,8 +698,8 @@ async def test_confirm_delete_invalid_index(mock_config_entry, caplog):
         the operation and return to menu. User can try again.
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
-    flow._schedule_index = None  # Invalid
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._active_active_schedule_index = None  # Invalid
 
     result = await flow.async_step_confirm_delete(user_input=None)
 
@@ -708,7 +708,7 @@ async def test_confirm_delete_invalid_index(mock_config_entry, caplog):
     assert result["step_id"] == "manage_schedules"
 
     # Should not delete anything
-    assert len(flow._schedules) == 3
+    assert len(flow._pending_schedules) == 3
 
     # Should log error
     assert "invalid schedule index" in caplog.text.lower()
@@ -742,8 +742,8 @@ async def test_select_edit_with_invalid_string_index(mock_config_entry, caplog):
         could send invalid string. Must handle gracefully.
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
-    flow._available_devices = ["climate.bedroom"]
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._selected_climate_entities = ["climate.bedroom"]
 
     user_input = {"schedule_index": "not_a_number"}
     result = await flow.async_step_select_schedule_to_edit(user_input=user_input)
@@ -765,7 +765,7 @@ async def test_edit_schedule_with_concurrent_deletion(mock_config_entry, caplog)
 
     Setup:
         - Create OptionsFlow with 3 schedules
-        - Set _schedule_index to 2
+        - Set _active_schedule_index to 2
         - Simulate concurrent deletion by reducing list to 2 items
 
     Action:
@@ -787,19 +787,19 @@ async def test_edit_schedule_with_concurrent_deletion(mock_config_entry, caplog)
     """
     flow = make_options_flow(mock_config_entry)
     # Start with 3 schedules
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
-    flow._schedule_index = 2  # Valid for 3 schedules
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._active_active_schedule_index = 2  # Valid for 3 schedules
 
     # Simulate concurrent deletion - now only 2 schedules
-    flow._schedules = flow._schedules[:2]
-    flow._available_devices = ["climate.bedroom"]
+    flow._pending_schedules = flow._pending_schedules[:2]
+    flow._selected_climate_entities = ["climate.bedroom"]
 
     result = await flow.async_step_edit_schedule(user_input=None)
 
     # Should handle gracefully
     assert result["type"] == "form"
     assert result["step_id"] == "manage_schedules"
-    assert flow._schedule_index is None
+    assert flow._active_active_schedule_index is None
 
     # Should log helpful error
     assert "invalid schedule index" in caplog.text.lower()
@@ -816,7 +816,7 @@ async def test_delete_last_schedule(mock_config_entry):
 
     Setup:
         - Create OptionsFlow with only 1 schedule
-        - Set _schedule_index to 0
+        - Set _active_schedule_index to 0
         - Set required state for manage_schedules to work
 
     Action:
@@ -837,16 +837,16 @@ async def test_delete_last_schedule(mock_config_entry):
         crashing, not the persistence behavior.
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = [mock_config_entry.data[CONF_SCHEDULES][0]]  # Only "Morning"
-    flow._schedule_index = 0
-    flow._global_config = {
+    flow._pending_schedules = [mock_config_entry.data[CONF_SCHEDULES][0]]  # Only "Morning"
+    flow._active_active_schedule_index = 0
+    flow._global_settings = {
         CONF_AUTO_HEATING_ENABLED: True,
         CONF_ONLY_SCHEDULED_ACTIVE: False,
     }
-    flow._available_devices = ["climate.bedroom"]
+    flow._selected_climate_entities = ["climate.bedroom"]
 
     # Before deletion
-    assert len(flow._schedules) == 1
+    assert len(flow._pending_schedules) == 1
 
     user_input = {"action": "confirm"}
 
@@ -858,7 +858,7 @@ async def test_delete_last_schedule(mock_config_entry):
     assert result["step_id"] == "manage_schedules"
 
     # The schedule index should be reset
-    assert flow._schedule_index is None
+    assert flow._active_active_schedule_index is None
 
 
 # ============================================================================
@@ -875,7 +875,7 @@ async def test_manage_schedules_shows_edit_delete_when_schedules_exist(mock_conf
 
     Setup:
         - Create OptionsFlow with 3 schedules
-        - Set required state (_global_config, _available_devices)
+        - Set required state (_global_settings, _selected_climate_entities)
 
     Action:
         - Call async_step_manage_schedules
@@ -890,9 +890,9 @@ async def test_manage_schedules_shows_edit_delete_when_schedules_exist(mock_conf
         menu. Edit and Delete only appear if schedules exist.
     """
     flow = make_options_flow(mock_config_entry)
-    flow._schedules = list(mock_config_entry.data[CONF_SCHEDULES])
-    flow._global_config = {CONF_AUTO_HEATING_ENABLED: True}
-    flow._available_devices = ["climate.bedroom"]
+    flow._pending_schedules = list(mock_config_entry.data[CONF_SCHEDULES])
+    flow._global_settings = {CONF_AUTO_HEATING_ENABLED: True}
+    flow._selected_climate_entities = ["climate.bedroom"]
 
     result = await flow.async_step_manage_schedules(user_input=None)
 
@@ -946,8 +946,8 @@ async def test_manage_schedules_with_no_schedules_in_config():
     )
 
     flow = make_options_flow(empty_config)
-    flow._global_config = {CONF_AUTO_HEATING_ENABLED: True}
-    flow._available_devices = ["climate.bedroom"]
+    flow._global_settings = {CONF_AUTO_HEATING_ENABLED: True}
+    flow._selected_climate_entities = ["climate.bedroom"]
 
     result = await flow.async_step_manage_schedules(user_input=None)
 
