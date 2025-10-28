@@ -220,7 +220,13 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
     def _resolve_presence(self, config) -> Tuple[Dict[str, bool], bool, bool]:
         """Determine presence based on configured device trackers."""
-        tracker_entities = list(config.get(CONF_DEVICE_TRACKERS, []))
+        tracker_entities = [
+            tracker for tracker in config.get(CONF_DEVICE_TRACKERS, []) if tracker
+        ]
+
+        if not tracker_entities:
+            # Presence tracking disabled; assume occupants are home so schedules remain eligible.
+            return {}, True, False
 
         tracker_states: Dict[str, bool] = {}
         for tracker in tracker_entities:

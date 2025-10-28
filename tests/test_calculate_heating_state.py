@@ -116,6 +116,65 @@ def test_schedule_activation_with_presence(monkeypatch, dummy_hass: DummyHass):
     assert result.device_decisions["climate.bedroom"].should_be_active is False
 
 
+def test_schedule_activation_without_trackers_defaults_to_home(monkeypatch, dummy_hass: DummyHass):
+    freeze_time(monkeypatch, 7, 30)
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_DEVICE_TRACKERS: [],
+        CONF_ONLY_SCHEDULED_ACTIVE: True,
+        CONF_CLIMATE_DEVICES: ["climate.living_room"],
+        CONF_SCHEDULES: [
+            base_schedule(
+                "Morning",
+                "06:00",
+                "09:00",
+                devices=["climate.living_room"],
+                temperature=21.5,
+                fan_mode="auto",
+            )
+        ],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    assert result.both_away is False
+    assert result.anyone_home is True
+    assert result.schedule_decisions["Morning"].is_active is True
+    assert result.diagnostics.trackers_total == 0
+    assert result.diagnostics.trackers_home == 0
+
+
+def test_blank_tracker_entries_are_ignored(monkeypatch, dummy_hass: DummyHass):
+    freeze_time(monkeypatch, 7, 30)
+    dummy_hass.states.set("device_tracker.user1", DummyState("home", {}))
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_DEVICE_TRACKERS: ["", None, "device_tracker.user1"],
+        CONF_ONLY_SCHEDULED_ACTIVE: True,
+        CONF_CLIMATE_DEVICES: ["climate.living_room"],
+        CONF_SCHEDULES: [
+            base_schedule(
+                "Morning",
+                "06:00",
+                "09:00",
+                devices=["climate.living_room"],
+                temperature=21.5,
+                fan_mode="auto",
+            )
+        ],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    assert result.anyone_home is True
+    assert result.diagnostics.trackers_total == 1
+    assert result.diagnostics.trackers_home == 1
+
+
 def test_only_scheduled_active_false_allows_defaults(monkeypatch, dummy_hass: DummyHass):
     freeze_time(monkeypatch, 12, 0)
     dummy_hass.states.set("device_tracker.user1", DummyState("home", {}))

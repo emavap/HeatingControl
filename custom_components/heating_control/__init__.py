@@ -40,21 +40,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle config entry options update.
-
-    Instead of fully reloading, we force the coordinator to apply
-    the new configuration on next update cycle.
-    """
-    coordinator = hass.data[DOMAIN].get(entry.entry_id)
-
-    if coordinator:
-        _LOGGER.info("Configuration updated, forcing control application on next refresh")
-        # Force update on next refresh to apply new config immediately
-        coordinator.force_update_on_next_refresh()
-        # Trigger immediate refresh
-        await coordinator.async_request_refresh()
-    else:
-        # Fallback to full reload if coordinator not found
-        _LOGGER.warning("Coordinator not found, performing full reload")
-        await async_unload_entry(hass, entry)
-        await async_setup_entry(hass, entry)
+    """Handle config entry options update by reloading the entry."""
+    _LOGGER.info("Configuration updated, reloading Heating Control entry")
+    await hass.config_entries.async_reload(entry.entry_id)

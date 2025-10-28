@@ -9,6 +9,7 @@ from homeassistant.util import slugify
 
 from .const import (
     CONF_CLIMATE_DEVICES,
+    CONF_DEVICE_TRACKERS,
     CONF_GAS_HEATER_ENTITY,
     DOMAIN,
 )
@@ -44,7 +45,13 @@ class HeatingControlDashboardStrategy(Strategy):
         snapshot = coordinator.data
 
         device_cards = self._build_device_cards(climate_entities, gas_heater)
-        status_cards = self._build_status_cards(snapshot, climate_entities, gas_heater)
+        tracker_entities: Sequence[str] = self._get_config_list(
+            coordinator, CONF_DEVICE_TRACKERS
+        )
+
+        status_cards = self._build_status_cards(
+            snapshot, climate_entities, gas_heater, tracker_entities
+        )
 
         sections: List[Dict[str, Any]] = []
 
@@ -172,6 +179,7 @@ class HeatingControlDashboardStrategy(Strategy):
         snapshot,
         climate_entities: Sequence[str],
         gas_heater: Optional[str],
+        tracker_entities: Sequence[str],
     ) -> List[Dict[str, Any]]:
         """Create entities/tile cards summarising integration status."""
         cards: List[Dict[str, Any]] = []
@@ -235,6 +243,21 @@ class HeatingControlDashboardStrategy(Strategy):
                         "entities": device_entities,
                     }
                 )
+
+        if tracker_entities:
+            cards.append(
+                {
+                    "type": "entities",
+                    "title": "Presence trackers",
+                    "entities": [
+                        {
+                            "entity": tracker_entity,
+                            "name": self._friendly_name(tracker_entity),
+                        }
+                        for tracker_entity in tracker_entities
+                    ],
+                }
+            )
 
         cards.append(
             {

@@ -6,8 +6,7 @@
         "description": "Configure global heating control settings",
         "data": {
           "gas_heater_entity": "Gas Heater Entity (optional)",
-          "device_tracker_1": "Primary Device Tracker (optional)",
-          "device_tracker_2": "Secondary Device Tracker (optional)",
+          "device_trackers": "Device Trackers to Observe (optional)",
           "automatic_heating_enabled": "Enable Automatic Heating",
           "only_scheduled_devices_active": "Only Scheduled Devices Active (devices not in any schedule remain off)"
         }
@@ -58,8 +57,7 @@
         "description": "Update global heating control settings",
         "data": {
           "gas_heater_entity": "Gas Heater Entity (optional)",
-          "device_tracker_1": "Primary Device Tracker (optional)",
-          "device_tracker_2": "Secondary Device Tracker (optional)",
+          "device_trackers": "Device Trackers to Observe (optional)",
           "automatic_heating_enabled": "Enable Automatic Heating",
           "only_scheduled_devices_active": "Only Scheduled Devices Active (devices not in any schedule remain off)"
         }
