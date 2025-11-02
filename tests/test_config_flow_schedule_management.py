@@ -31,16 +31,17 @@ from custom_components.heating_control.const import (
     CONF_AUTO_HEATING_ENABLED,
     CONF_CLIMATE_DEVICES,
     CONF_DEVICE_TRACKERS,
-    CONF_ONLY_SCHEDULED_ACTIVE,
     CONF_SCHEDULES,
     CONF_SCHEDULE_DEVICES,
     CONF_SCHEDULE_ENABLED,
     CONF_SCHEDULE_END,
     CONF_SCHEDULE_FAN_MODE,
+    CONF_SCHEDULE_HVAC_MODE,
     CONF_SCHEDULE_NAME,
     CONF_SCHEDULE_ONLY_WHEN_HOME,
     CONF_SCHEDULE_START,
     CONF_SCHEDULE_TEMPERATURE,
+    DEFAULT_SCHEDULE_HVAC_MODE,
 )
 
 
@@ -64,7 +65,6 @@ def mock_config_entry():
         data={
             CONF_DEVICE_TRACKERS: ["device_tracker.phone1", "device_tracker.phone2"],
             CONF_AUTO_HEATING_ENABLED: True,
-            CONF_ONLY_SCHEDULED_ACTIVE: False,
             CONF_CLIMATE_DEVICES: ["climate.bedroom", "climate.living_room"],
             CONF_SCHEDULES: [
                 {
@@ -75,6 +75,7 @@ def mock_config_entry():
                     CONF_SCHEDULE_END: "09:00",
                     CONF_SCHEDULE_TEMPERATURE: 21.0,
                     CONF_SCHEDULE_FAN_MODE: "auto",
+                    CONF_SCHEDULE_HVAC_MODE: "heat",
                     CONF_SCHEDULE_ONLY_WHEN_HOME: True,
                     CONF_SCHEDULE_DEVICES: ["climate.bedroom"],
                 },
@@ -86,6 +87,7 @@ def mock_config_entry():
                     CONF_SCHEDULE_END: "22:00",
                     CONF_SCHEDULE_TEMPERATURE: 22.5,
                     CONF_SCHEDULE_FAN_MODE: "high",
+                    CONF_SCHEDULE_HVAC_MODE: "heat",
                     CONF_SCHEDULE_ONLY_WHEN_HOME: True,
                     CONF_SCHEDULE_DEVICES: ["climate.living_room"],
                 },
@@ -97,6 +99,7 @@ def mock_config_entry():
                     CONF_SCHEDULE_END: "07:00",
                     CONF_SCHEDULE_TEMPERATURE: 18.0,
                     CONF_SCHEDULE_FAN_MODE: "low",
+                    CONF_SCHEDULE_HVAC_MODE: "off",
                     CONF_SCHEDULE_ONLY_WHEN_HOME: True,
                     CONF_SCHEDULE_DEVICES: [],
                 },
@@ -162,15 +165,15 @@ def test_build_schedule_options_with_schedules(mock_config_entry):
     assert len(options) == 3
 
     # First option should be formatted correctly
-    assert options[0]["label"] == "1. Morning (starts 07:00)"
+    assert options[0]["label"] == "1. Morning (starts 07:00, mode heat)"
     assert options[0]["value"] == "0"
 
     # Second option
-    assert options[1]["label"] == "2. Evening (starts 18:00)"
+    assert options[1]["label"] == "2. Evening (starts 18:00, mode heat)"
     assert options[1]["value"] == "1"
 
     # Third option
-    assert options[2]["label"] == "3. Night (starts 22:00)"
+    assert options[2]["label"] == "3. Night (starts 22:00, mode off)"
     assert options[2]["value"] == "2"
 
 
@@ -828,7 +831,6 @@ async def test_delete_last_schedule(mock_config_entry):
     flow._active_schedule_index = 0
     flow._global_settings = {
         CONF_AUTO_HEATING_ENABLED: True,
-        CONF_ONLY_SCHEDULED_ACTIVE: False,
     }
     flow._selected_climate_entities = ["climate.bedroom"]
 
@@ -925,7 +927,6 @@ async def test_manage_schedules_with_no_schedules_in_config():
         data={
             CONF_DEVICE_TRACKERS: [],
             CONF_AUTO_HEATING_ENABLED: True,
-            CONF_ONLY_SCHEDULED_ACTIVE: False,
             CONF_CLIMATE_DEVICES: ["climate.bedroom"],
             CONF_SCHEDULES: [],  # Empty schedules
         },

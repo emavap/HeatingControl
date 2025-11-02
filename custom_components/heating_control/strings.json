@@ -6,8 +6,7 @@
         "description": "Configure global heating control settings",
         "data": {
           "device_trackers": "Device Trackers to Observe (optional)",
-          "automatic_heating_enabled": "Enable Automatic Heating",
-          "only_scheduled_devices_active": "Only Scheduled Devices Active (devices not in any schedule remain off)"
+          "automatic_heating_enabled": "Enable Automatic Heating"
         }
       },
       "select_devices": {
@@ -30,6 +29,7 @@
         "data": {
           "name": "Schedule Name",
           "enabled": "Schedule Enabled",
+          "hvac_mode": "HVAC Mode",
           "temperature": "Target Temperature",
           "fan_mode": "Fan Mode",
           "start_time": "Start Time",
@@ -53,8 +53,7 @@
         "description": "Update global heating control settings",
         "data": {
           "device_trackers": "Device Trackers to Observe (optional)",
-          "automatic_heating_enabled": "Enable Automatic Heating",
-          "only_scheduled_devices_active": "Only Scheduled Devices Active (devices not in any schedule remain off)"
+          "automatic_heating_enabled": "Enable Automatic Heating"
         }
       },
       "select_devices": {
@@ -77,6 +76,7 @@
         "data": {
           "name": "Schedule Name",
           "enabled": "Schedule Enabled",
+          "hvac_mode": "HVAC Mode",
           "temperature": "Target Temperature",
           "fan_mode": "Fan Mode",
           "start_time": "Start Time",

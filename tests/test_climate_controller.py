@@ -17,14 +17,15 @@ def make_controller(hass: DummyHass) -> ClimateController:
 def _decision(
     entity_id: str,
     *,
-    on: bool,
+    hvac_mode: str,
     temp: float,
     fan: str,
 ) -> DeviceDecision:
     return DeviceDecision(
         entity_id=entity_id,
-        should_be_active=on,
+        should_be_active=hvac_mode != "off",
         active_schedules=("Test",),
+        hvac_mode=hvac_mode,
         target_temp=temp,
         target_fan=fan,
     )
@@ -38,7 +39,9 @@ async def test_turn_on_device_with_full_update(dummy_hass: DummyHass, no_sleep):
     )
     controller = make_controller(dummy_hass)
 
-    await controller.async_apply([_decision("climate.living_room", on=True, temp=23.5, fan="high")])
+    await controller.async_apply([
+        _decision("climate.living_room", hvac_mode="heat", temp=23.5, fan="high")
+    ])
 
     assert dummy_hass.services.calls == [
         {
@@ -72,12 +75,12 @@ async def test_temperature_change_without_mode_toggle(dummy_hass: DummyHass, no_
 
     # Prime controller history
     await controller.async_apply(
-        [_decision("climate.office", on=True, temp=21.0, fan="auto")],
+        [_decision("climate.office", hvac_mode="heat", temp=21.0, fan="auto")],
     )
     dummy_hass.services.calls.clear()
 
     await controller.async_apply(
-        [_decision("climate.office", on=True, temp=22.5, fan="auto")],
+        [_decision("climate.office", hvac_mode="heat", temp=22.5, fan="auto")],
     )
 
     assert dummy_hass.services.calls == [
@@ -98,10 +101,14 @@ async def test_turn_off_device(dummy_hass: DummyHass, no_sleep):
     )
     controller = make_controller(dummy_hass)
 
-    await controller.async_apply([_decision("climate.bedroom", on=True, temp=20.0, fan="auto")])
+    await controller.async_apply([
+        _decision("climate.bedroom", hvac_mode="heat", temp=20.0, fan="auto")
+    ])
     dummy_hass.services.calls.clear()
 
-    await controller.async_apply([_decision("climate.bedroom", on=False, temp=20.0, fan="auto")])
+    await controller.async_apply([
+        _decision("climate.bedroom", hvac_mode="off", temp=20.0, fan="auto")
+    ])
 
     assert dummy_hass.services.calls == [
         {
@@ -121,7 +128,7 @@ async def test_no_changes_no_calls(dummy_hass: DummyHass, no_sleep):
     )
     controller = make_controller(dummy_hass)
 
-    decision = _decision("climate.kitchen", on=True, temp=20.0, fan="auto")
+    decision = _decision("climate.kitchen", hvac_mode="heat", temp=20.0, fan="auto")
     await controller.async_apply([decision])
     dummy_hass.services.calls.clear()
 
@@ -138,7 +145,9 @@ async def test_fan_mode_not_supported(dummy_hass: DummyHass, no_sleep):
     )
     controller = make_controller(dummy_hass)
 
-    await controller.async_apply([_decision("climate.study", on=True, temp=21.0, fan="high")])
+    await controller.async_apply([
+        _decision("climate.study", hvac_mode="heat", temp=21.0, fan="high")
+    ])
 
     assert any(call["service"] == "set_hvac_mode" for call in dummy_hass.services.calls)
     assert any(call["service"] == "set_temperature" for call in dummy_hass.services.calls)
@@ -149,3 +158,17 @@ async def test_fan_mode_not_supported(dummy_hass: DummyHass, no_sleep):
     ]
     assert not fan_calls
 
+
+@pytest.mark.asyncio
+async def test_switch_to_cool_mode(dummy_hass: DummyHass, no_sleep):
+    dummy_hass.states.set(
+        "climate.sunroom",
+        DummyState("heat", {"fan_modes": ["auto"]}),
+    )
+    controller = make_controller(dummy_hass)
+
+    await controller.async_apply([
+        _decision("climate.sunroom", hvac_mode="cool", temp=24.0, fan="auto")
+    ])
+
+    assert dummy_hass.services.calls[0]["data"]["hvac_mode"] == "cool"

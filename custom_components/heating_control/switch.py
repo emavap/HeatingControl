@@ -15,10 +15,12 @@ from .const import (
     CONF_SCHEDULE_DEVICES,
     CONF_SCHEDULE_ENABLED,
     CONF_SCHEDULE_END,
+    CONF_SCHEDULE_HVAC_MODE,
     CONF_SCHEDULE_ID,
     CONF_SCHEDULE_NAME,
     CONF_SCHEDULE_ONLY_WHEN_HOME,
     CONF_SCHEDULE_START,
+    DEFAULT_SCHEDULE_HVAC_MODE,
     DOMAIN,
     SCHEDULE_SWITCH_ENTITY_TEMPLATE,
 )
@@ -112,6 +114,7 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
                 "schedule_id": schedule.schedule_id,
                 "start_time": schedule.start_time,
                 "end_time": schedule.end_time,
+                "hvac_mode": schedule.hvac_mode,
                 "only_when_home": schedule.only_when_home,
                 "in_time_window": schedule.in_time_window,
                 "presence_ok": schedule.presence_ok,
@@ -126,6 +129,9 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
                 "schedule_id": config_schedule.get(CONF_SCHEDULE_ID, self._schedule_id),
                 "start_time": config_schedule.get(CONF_SCHEDULE_START),
                 "end_time": config_schedule.get(CONF_SCHEDULE_END),
+                "hvac_mode": config_schedule.get(
+                    CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE
+                ),
                 "only_when_home": config_schedule.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True),
                 "device_count": len(config_schedule.get(CONF_SCHEDULE_DEVICES, [])),
             }

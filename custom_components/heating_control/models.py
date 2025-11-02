@@ -13,6 +13,7 @@ class ScheduleDecision:
     name: str
     start_time: str
     end_time: str
+    hvac_mode: str
     only_when_home: bool
     enabled: bool
     is_active: bool
@@ -30,6 +31,7 @@ class ScheduleDecision:
             "name": self.name,
             "start_time": self.start_time,
             "end_time": self.end_time,
+            "hvac_mode": self.hvac_mode,
             "only_when_home": self.only_when_home,
             "enabled": self.enabled,
             "is_active": self.is_active,
@@ -49,6 +51,7 @@ class DeviceDecision:
     entity_id: str
     should_be_active: bool
     active_schedules: Tuple[str, ...]
+    hvac_mode: str
     target_temp: float
     target_fan: str
 
@@ -58,6 +61,7 @@ class DeviceDecision:
             "entity_id": self.entity_id,
             "should_be_active": self.should_be_active,
             "active_schedules": list(self.active_schedules),
+            "hvac_mode": self.hvac_mode,
             "target_temp": self.target_temp,
             "target_fan": self.target_fan,
         }
@@ -72,7 +76,6 @@ class DiagnosticsSnapshot:
     trackers_home: int
     trackers_total: int
     auto_heating_enabled: bool
-    only_scheduled_active: bool
     schedule_count: int
     active_schedules: int
     active_devices: int
@@ -85,7 +88,6 @@ class DiagnosticsSnapshot:
             "trackers_home": self.trackers_home,
             "trackers_total": self.trackers_total,
             "auto_heating_enabled": self.auto_heating_enabled,
-            "only_scheduled_active": self.only_scheduled_active,
             "schedule_count": self.schedule_count,
             "active_schedules": self.active_schedules,
             "active_devices": self.active_devices,

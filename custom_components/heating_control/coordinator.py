@@ -4,7 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timedelta
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from homeassistant.const import STATE_HOME
 from homeassistant.core import HomeAssistant, State
@@ -14,7 +14,6 @@ from .const import (
     CONF_AUTO_HEATING_ENABLED,
     CONF_CLIMATE_DEVICES,
     CONF_DEVICE_TRACKERS,
-    CONF_ONLY_SCHEDULED_ACTIVE,
     CONF_SCHEDULES,
     CONF_SCHEDULE_DEVICES,
     CONF_SCHEDULE_ENABLED,
@@ -23,12 +22,13 @@ from .const import (
     CONF_SCHEDULE_ID,
     CONF_SCHEDULE_NAME,
     CONF_SCHEDULE_ONLY_WHEN_HOME,
+    CONF_SCHEDULE_HVAC_MODE,
     CONF_SCHEDULE_START,
     CONF_SCHEDULE_TEMPERATURE,
     DEFAULT_FINAL_SETTLE,
-    DEFAULT_ONLY_SCHEDULED_ACTIVE,
     DEFAULT_SCHEDULE_END,
     DEFAULT_SCHEDULE_FAN_MODE,
+    DEFAULT_SCHEDULE_HVAC_MODE,
     DEFAULT_SCHEDULE_START,
     DEFAULT_SCHEDULE_TEMPERATURE,
     DEFAULT_SETTLE_SECONDS,
@@ -216,9 +216,6 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         tracker_states = dict(tracker_states)
 
         auto_heating_enabled = config.get(CONF_AUTO_HEATING_ENABLED, True)
-        only_scheduled_active = config.get(
-            CONF_ONLY_SCHEDULED_ACTIVE, DEFAULT_ONLY_SCHEDULED_ACTIVE
-        )
 
         schedule_decisions, device_builders = self._evaluate_schedules(
             config,
@@ -230,9 +227,6 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         device_decisions = self._finalize_device_decisions(
             config,
             device_builders,
-            anyone_home,
-            auto_heating_enabled,
-            only_scheduled_active,
         )
 
         diagnostics = DiagnosticsSnapshot(
@@ -241,7 +235,6 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             trackers_home=sum(tracker_states.values()),
             trackers_total=len(tracker_states),
             auto_heating_enabled=auto_heating_enabled,
-            only_scheduled_active=only_scheduled_active,
             schedule_count=len(config.get(CONF_SCHEDULES, [])),
             active_schedules=sum(dec.is_active for dec in schedule_decisions.values()),
             active_devices=sum(
@@ -292,12 +285,12 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         auto_heating_enabled: bool,
     ) -> Tuple[
         Dict[str, ScheduleDecision],
-        Dict[str, Dict[str, List]],
+        Dict[str, List[Dict[str, Any]]],
     ]:
         """Evaluate all configured schedules and prepare device aggregations."""
         schedules = config.get(CONF_SCHEDULES, [])
         schedule_decisions: Dict[str, ScheduleDecision] = {}
-        device_builders: Dict[str, Dict[str, List]] = {}
+        device_builders: Dict[str, List[Dict[str, Any]]] = {}
 
         auto_end_times = self._derive_auto_end_times(schedules)
 
@@ -316,6 +309,9 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             else:
                 end_time = auto_end_times.get(schedule_id, DEFAULT_SCHEDULE_END)
             only_when_home = schedule.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True)
+            hvac_mode = str(
+                schedule.get(CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE)
+            ).lower()
             device_entities = schedule.get(CONF_SCHEDULE_DEVICES, [])
             schedule_temp = float(
                 schedule.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE)
@@ -337,6 +333,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 name=schedule_name,
                 start_time=start_time,
                 end_time=end_time,
+                hvac_mode=hvac_mode,
                 only_when_home=only_when_home,
                 enabled=enabled,
                 is_active=is_active,
@@ -352,71 +349,82 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 continue
 
             for device_entity in device_entities:
-                builder = device_builders.setdefault(
-                    device_entity,
+                device_builders.setdefault(device_entity, []).append(
                     {
-                        "active_schedules": [],
-                        "temperatures": [],
-                        "fan_modes": [],
-                        "should_be_active": False,
-                    },
+                        "schedule_name": schedule_name,
+                        "order": index,
+                        "hvac_mode": hvac_mode,
+                        "temperature": schedule_temp,
+                        "fan_mode": schedule_fan,
+                    }
                 )
-                builder["active_schedules"].append(schedule_name)
-                builder["temperatures"].append(schedule_temp)
-                builder["fan_modes"].append(schedule_fan)
-                builder["should_be_active"] = True
 
         return schedule_decisions, device_builders
 
     def _finalize_device_decisions(
         self,
         config,
-        device_builders: Dict[str, Dict[str, List]],
-        anyone_home: bool,
-        auto_heating_enabled: bool,
-        only_scheduled_active: bool,
+        device_builders: Dict[str, List[Dict[str, Any]]],
     ) -> Dict[str, DeviceDecision]:
         """Create DeviceDecision objects for each configured device."""
         all_devices = config.get(CONF_CLIMATE_DEVICES, [])
         device_decisions: Dict[str, DeviceDecision] = {}
 
         for device_entity in all_devices:
-            builder = device_builders.setdefault(
-                device_entity,
-                {
-                    "active_schedules": [],
-                    "temperatures": [],
-                    "fan_modes": [],
-                    "should_be_active": False,
-                },
-            )
+            entries = device_builders.get(device_entity, [])
+            active_schedules = tuple(entry["schedule_name"] for entry in entries)
 
-            if not builder["should_be_active"]:
-                builder["should_be_active"] = (
-                    not only_scheduled_active and auto_heating_enabled and anyone_home
-                )
+            hvac_mode, target_temp, target_fan = self._select_device_targets(entries)
 
-            temperatures = builder["temperatures"]
-            fan_modes = builder["fan_modes"]
-
-            if temperatures:
-                max_temp = max(temperatures)
-                max_temp_idx = temperatures.index(max_temp)
-                target_temp = max_temp
-                target_fan = fan_modes[max_temp_idx]
-            else:
+            should_be_active = hvac_mode != "off"
+            if target_temp is None:
                 target_temp = DEFAULT_SCHEDULE_TEMPERATURE
+            if target_fan is None:
                 target_fan = DEFAULT_SCHEDULE_FAN_MODE
 
             device_decisions[device_entity] = DeviceDecision(
                 entity_id=device_entity,
-                should_be_active=builder["should_be_active"],
-                active_schedules=tuple(builder["active_schedules"]),
+                should_be_active=should_be_active,
+                active_schedules=active_schedules,
+                hvac_mode=hvac_mode,
                 target_temp=target_temp,
                 target_fan=target_fan,
             )
 
         return device_decisions
+
+    @staticmethod
+    def _select_device_targets(
+        entries: List[Dict[str, Any]]
+    ) -> Tuple[str, Optional[float], Optional[str]]:
+        """Select the hvac mode, temperature, and fan for a device."""
+        if not entries:
+            return "off", None, None
+
+        hvac_priority = {
+            "off": 3,
+            "heat": 2,
+            "cool": 2,
+            "dry": 1,
+            "fan_only": 1,
+            "auto": 1,
+        }
+
+        def entry_key(entry: Dict[str, Any]) -> Tuple[int, float, int]:
+            mode = entry.get("hvac_mode", "heat")
+            priority = hvac_priority.get(mode, 1)
+            temperature = entry.get("temperature")
+            temp_value = temperature if temperature is not None else float("-inf")
+            order = entry.get("order", 0)
+            return (priority, temp_value, -order)
+
+        best = max(entries, key=entry_key)
+        mode = best.get("hvac_mode", "heat")
+
+        if mode == "off":
+            return "off", None, None
+
+        return mode, best.get("temperature"), best.get("fan_mode")
 
     async def async_set_schedule_enabled(
         self,

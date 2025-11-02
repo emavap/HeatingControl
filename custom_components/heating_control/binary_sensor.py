@@ -126,6 +126,7 @@ class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "enabled": schedule.enabled,
             "start_time": schedule.start_time,
             "end_time": schedule.end_time,
+            "hvac_mode": schedule.hvac_mode,
             "only_when_home": schedule.only_when_home,
             "in_time_window": schedule.in_time_window,
             "presence_ok": schedule.presence_ok,
@@ -177,6 +178,7 @@ class DeviceActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "entity_id": device.entity_id,
             "active_schedules": active_schedules,
             "schedule_count": len(active_schedules),
+            "hvac_mode": device.hvac_mode,
             "target_temp": device.target_temp,
             "target_fan": device.target_fan,
         }

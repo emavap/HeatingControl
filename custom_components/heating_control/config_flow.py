@@ -16,7 +16,6 @@ from .const import (
     DOMAIN,
     CONF_DEVICE_TRACKERS,
     CONF_AUTO_HEATING_ENABLED,
-    CONF_ONLY_SCHEDULED_ACTIVE,
     CONF_SCHEDULES,
     CONF_SCHEDULE_ID,
     CONF_SCHEDULE_NAME,
@@ -24,6 +23,7 @@ from .const import (
     CONF_SCHEDULE_START,
     CONF_SCHEDULE_END,
     CONF_SCHEDULE_ONLY_WHEN_HOME,
+    CONF_SCHEDULE_HVAC_MODE,
     CONF_SCHEDULE_DEVICES,
     CONF_SCHEDULE_TEMPERATURE,
     CONF_SCHEDULE_FAN_MODE,
@@ -31,8 +31,8 @@ from .const import (
     DEFAULT_SCHEDULE_START,
     DEFAULT_SCHEDULE_END,
     DEFAULT_SCHEDULE_TEMPERATURE,
+    DEFAULT_SCHEDULE_HVAC_MODE,
     DEFAULT_SCHEDULE_FAN_MODE,
-    DEFAULT_ONLY_SCHEDULED_ACTIVE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,10 +85,6 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.EntitySelectorConfig(domain="device_tracker", multiple=True)
                 ),
                 vol.Required(CONF_AUTO_HEATING_ENABLED, default=True): selector.BooleanSelector(),
-                vol.Required(
-                    CONF_ONLY_SCHEDULED_ACTIVE,
-                    default=DEFAULT_ONLY_SCHEDULED_ACTIVE
-                ): selector.BooleanSelector(),
             }
         )
 
@@ -160,8 +156,11 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 name = schedule.get(CONF_SCHEDULE_NAME, "Unnamed")
                 start = schedule.get(CONF_SCHEDULE_START, "")
                 device_count = len(schedule.get(CONF_SCHEDULE_DEVICES, []))
+                hvac_mode = schedule.get(
+                    CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE
+                )
                 description += (
-                    f"- {name} (starts {start}, auto end): "
+                    f"- {name} (starts {start}, auto end, mode {hvac_mode}): "
                     f"{device_count} devices\n"
                 )
 
@@ -184,6 +183,9 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_SCHEDULE_NAME: user_input[CONF_SCHEDULE_NAME],
                 CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
                 CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
+                CONF_SCHEDULE_HVAC_MODE: user_input.get(
+                    CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE
+                ),
                 CONF_SCHEDULE_ONLY_WHEN_HOME: user_input.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True),
                 CONF_SCHEDULE_DEVICES: user_input.get(CONF_SCHEDULE_DEVICES, []),
                 CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
@@ -195,10 +197,29 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Create device options from available devices
         device_options = [{"label": device, "value": device} for device in self._selected_climate_entities]
 
+        hvac_options = [
+            {"label": "Heat", "value": "heat"},
+            {"label": "Cool", "value": "cool"},
+            {"label": "Off", "value": "off"},
+            {"label": "Auto", "value": "auto"},
+            {"label": "Dry", "value": "dry"},
+            {"label": "Fan Only", "value": "fan_only"},
+        ]
+
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_SCHEDULE_NAME): selector.TextSelector(),
                 vol.Required(CONF_SCHEDULE_ENABLED, default=True): selector.BooleanSelector(),
+                vol.Required(
+                    CONF_SCHEDULE_HVAC_MODE,
+                    default=DEFAULT_SCHEDULE_HVAC_MODE,
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=hvac_options,
+                        multiple=False,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
                 vol.Required(CONF_SCHEDULE_TEMPERATURE, default=DEFAULT_SCHEDULE_TEMPERATURE): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=10, max=30, step=0.5, unit_of_measurement="°C")
                 ),
@@ -254,7 +275,8 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         return [
             {
                 "label": f"{idx + 1}. {schedule.get(CONF_SCHEDULE_NAME, 'Unnamed')} "
-                         f"(starts {schedule.get(CONF_SCHEDULE_START, '')})",
+                         f"(starts {schedule.get(CONF_SCHEDULE_START, '')}, mode "
+                         f"{schedule.get(CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE)})",
                 "value": str(idx)
             }
             for idx, schedule in enumerate(self._pending_schedules)
@@ -285,10 +307,6 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                 vol.Required(
                     CONF_AUTO_HEATING_ENABLED,
                     default=current_config.get(CONF_AUTO_HEATING_ENABLED, True)
-                ): selector.BooleanSelector(),
-                vol.Required(
-                    CONF_ONLY_SCHEDULED_ACTIVE,
-                    default=current_config.get(CONF_ONLY_SCHEDULED_ACTIVE, DEFAULT_ONLY_SCHEDULED_ACTIVE)
                 ): selector.BooleanSelector(),
             }
         )
@@ -350,8 +368,11 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                 name = schedule.get(CONF_SCHEDULE_NAME, "Unnamed")
                 start = schedule.get(CONF_SCHEDULE_START, "")
                 device_count = len(schedule.get(CONF_SCHEDULE_DEVICES, []))
+                hvac_mode = schedule.get(
+                    CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE
+                )
                 schedule_list += (
-                    f"{idx + 1}. {name} (starts {start}, auto end): "
+                    f"{idx + 1}. {name} (starts {start}, auto end, mode {hvac_mode}): "
                     f"{device_count} devices\n"
                 )
         else:
@@ -482,6 +503,9 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                     CONF_SCHEDULE_NAME: user_input[CONF_SCHEDULE_NAME],
                     CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
                     CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
+                    CONF_SCHEDULE_HVAC_MODE: user_input.get(
+                        CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE
+                    ),
                     CONF_SCHEDULE_ONLY_WHEN_HOME: user_input.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True),
                     CONF_SCHEDULE_DEVICES: user_input.get(CONF_SCHEDULE_DEVICES, []),
                     CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
@@ -500,6 +524,14 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         # Get current schedule data
         current_schedule = self._pending_schedules[self._active_schedule_index]
         device_options = [{"label": device, "value": device} for device in self._selected_climate_entities]
+        hvac_options = [
+            {"label": "Heat", "value": "heat"},
+            {"label": "Cool", "value": "cool"},
+            {"label": "Off", "value": "off"},
+            {"label": "Auto", "value": "auto"},
+            {"label": "Dry", "value": "dry"},
+            {"label": "Fan Only", "value": "fan_only"},
+        ]
 
         data_schema = vol.Schema(
             {
@@ -511,6 +543,16 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                     CONF_SCHEDULE_ENABLED,
                     default=current_schedule.get(CONF_SCHEDULE_ENABLED, True)
                 ): selector.BooleanSelector(),
+                vol.Required(
+                    CONF_SCHEDULE_HVAC_MODE,
+                    default=current_schedule.get(CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE)
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=hvac_options,
+                        multiple=False,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
                 vol.Required(
                     CONF_SCHEDULE_TEMPERATURE,
                     default=current_schedule.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE)

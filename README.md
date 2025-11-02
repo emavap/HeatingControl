@@ -7,6 +7,7 @@ A custom Home Assistant integration that **automatically controls** climate devi
 - **Automatic Device Control**: Integration directly controls all configured climate devices
 - **Schedule-Based**: Define multiple schedules with time windows and device assignments
 - **Many-to-Many Relationships**: Devices can be in multiple schedules, schedules can have multiple devices
+- **Per-Schedule HVAC Modes**: Choose heating, cooling, or explicit off per schedule
 - **Presence-Based**: Schedules can require someone to be home
 - **Binary Sensors**: Monitor heating decisions and current state
 - **Decision Diagnostics**: Full visibility into heating logic
@@ -58,7 +59,6 @@ Configure settings that apply to all schedules:
 
 - **Device Trackers**: One or more device trackers for presence detection (optional)
 - **Automatic Heating**: Master enable/disable switch for automatic heating
-- **Only Scheduled Devices Active**: If enabled, devices not in any schedule remain off. If disabled, devices not in schedules will be on when someone is home (default: false)
 
 ### Step 2: Select Climate Devices
 
@@ -70,6 +70,7 @@ For each schedule, configure:
 
 - **Schedule Name**: Friendly name (e.g., "Night Bedroom", "Day Living Area")
 - **Enabled**: Enable/disable this schedule
+- **HVAC Mode**: Select whether the schedule heats, cools, or turns devices off
 - **Target Temperature**: Temperature for this schedule (default: 20°C)
 - **Fan Mode**: Fan mode for this schedule (default: "auto")
 - **Start Time**: When schedule becomes active (default: 00:00)
@@ -126,27 +127,23 @@ If ALL conditions pass, the schedule is **ACTIVE**.
 
 For each **active** schedule:
 
-- Each assigned device is marked as "should be on"
-- The schedule's temperature is added to that device's temperature list
-- The schedule's fan mode is added to that device's fan mode list
-- The schedule name is added to the device's active schedules list
+- Each assigned device records the schedule name, HVAC mode, temperature, and fan mode
+- Multiple schedules can contribute entries for the same device
 
 #### Step 3: Handle Devices Not in Any Schedule
 
 For devices that are NOT in any active schedule:
 
-- **If "Only Scheduled Devices Active" = true**: Device should be OFF
-- **If "Only Scheduled Devices Active" = false AND someone is home AND automatic heating enabled**: Device should be ON at default temperature (20°C)
-- **Otherwise**: Device should be OFF
+- The integration leaves their current state untouched; no commands are sent
 
 #### Step 4: Resolve Temperature Conflicts (Highest Wins)
 
-For each device that should be ON:
+For each device with at least one active schedule:
 
-1. Collect all temperatures from active schedules that include this device
-2. **Select the HIGHEST temperature** as the target
-3. Find which schedule provided that highest temperature
-4. Use the **fan mode from that same schedule**
+1. Collect all HVAC mode entries recorded in step 2
+2. If any active schedule sets the mode to `off`, the device is turned off
+3. Otherwise, **select the entry with the highest requested temperature** (ties fall back to schedule order)
+4. Use the temperature and fan mode from the selected schedule
 
 **Example:**
 ```
@@ -165,9 +162,9 @@ Result:
 
 For each managed climate device:
 
-1. **Resolve desired state**: Collect the target HVAC mode (on/off), temperature, and fan mode from the decision engine
+1. **Resolve desired state**: Collect the target HVAC mode (heat/cool/off/auto), temperature, and fan mode from the decision engine
 2. **Compare with last command**: The coordinator remembers the last HVAC/temperature/fan values it sent for each entity
-3. **Apply HVAC changes**: If the desired on/off state differs, send `set_hvac_mode` to toggle and wait 5 seconds for the device to settle
+3. **Apply HVAC changes**: If the desired HVAC mode differs, send `set_hvac_mode` and wait 5 seconds for the device to settle
 4. **Apply setpoint changes**: Whenever the target temperature differs, send `set_temperature` even if the device was already on
 5. **Apply fan changes**: When the target fan mode differs and is supported by the device, send `set_fan_mode`
 6. **Final settle**: If the HVAC mode changed during this cycle, wait an additional 2 seconds before moving on
@@ -207,17 +204,13 @@ A: No. The "highest temperature wins" rule always applies. If you need devices a
 
 **Q: What about devices not in any schedule?**
 
-A: This depends on the "Only Scheduled Devices Active" setting:
-- **If TRUE**: Devices not in any schedule stay OFF (most restrictive, saves energy)
-- **If FALSE**: Devices not in any schedule turn ON when someone is home (convenience mode)
+A: They are left alone. Heating Control only touches devices that are targeted by an active schedule; everything else stays in the state you set manually.
 
 ### Device Assignment Logic
 
 - Devices can be assigned to **multiple schedules**
-- If **any** active schedule includes a device, it should be on
-- Devices not in any schedule:
-  - If "Only Scheduled Devices Active" = true: remain off
-  - If "Only Scheduled Devices Active" = false: on when someone is home
+- If **any** active schedule includes a device, that schedule defines the device's HVAC mode and targets
+- Devices not included in any active schedule are left untouched by the integration
 
 ## Exposed Entities
 
@@ -234,6 +227,7 @@ For each schedule configured:
 - `schedule_name` - Schedule name
 - `in_time_window` - Is current time within schedule window
 - `presence_ok` - Does presence requirement allow activation
+- `hvac_mode` - HVAC mode requested by the schedule
 - `device_count` - Number of devices in schedule
 - `devices` - List of device entity IDs
 - `target_temp` - Target temperature
@@ -248,6 +242,7 @@ For each climate device configured:
 - `entity_id` - The climate entity ID
 - `active_schedules` - List of schedules wanting this device active
 - `schedule_count` - Number of active schedules for this device
+- `hvac_mode` - HVAC mode currently requested
 - `target_temp` - Target temperature (highest from active schedules for this device)
 - `target_fan` - Target fan mode (from schedule with highest temperature)
 
@@ -293,7 +288,7 @@ How it plays out:
 - **10:00 → 19:00**: Only the kitchen stays on; bedrooms idle.
 - **19:00 → 21:00**: Kitchen stays at 20 °C while bedroom2 gets a 22 °C boost.
 - **21:00 → 23:00**: Bedroom1 joins back at 20 °C, bedroom2 remains at 22 °C, kitchen unchanged.
-- **After 23:00**: No active schedules, so every unit turns off thanks to the empty “Lights Out” schedule and the `Only Scheduled Devices Active` option.
+- **After 23:00**: No active schedules, so every unit turns off thanks to the empty "Lights Out" schedule configured with HVAC mode `off`.
 
 This pattern highlights how start-only schedules let you build a day by chaining “what happens next” blocks. If a device should continue past a later start time, create another schedule for it at that moment.
 

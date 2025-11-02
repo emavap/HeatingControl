@@ -390,6 +390,8 @@ class HeatingControlDashboardStrategy(Strategy):
         if decision.only_when_home:
             parts.append("Home required")
 
+        parts.append(f"Mode {decision.hvac_mode}")
+
         if decision.device_count:
             device_suffix = "device" if decision.device_count == 1 else "devices"
             parts.append(f"{decision.device_count} {device_suffix}")
