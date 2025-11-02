@@ -38,6 +38,8 @@ def snapshot(
             start_time="00:00",
             end_time="23:59",
             hvac_mode="heat",
+            hvac_mode_home="heat",
+            hvac_mode_away=None,
             only_when_home=True,
             enabled=True,
             is_active=is_active,
@@ -45,7 +47,10 @@ def snapshot(
             presence_ok=True,
             device_count=0,
             devices=(),
+            schedule_device_trackers=(),
             target_temp=20.0,
+            target_temp_home=20.0,
+            target_temp_away=None,
             target_fan="auto",
         )
         for schedule_id, is_active in schedule_states.items()

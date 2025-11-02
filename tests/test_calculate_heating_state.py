@@ -16,6 +16,8 @@ from custom_components.heating_control.const import (
     CONF_SCHEDULE_END,
     CONF_SCHEDULE_FAN_MODE,
     CONF_SCHEDULE_HVAC_MODE,
+    CONF_SCHEDULE_AWAY_HVAC_MODE,
+    CONF_SCHEDULE_AWAY_TEMPERATURE,
     CONF_SCHEDULE_NAME,
     CONF_SCHEDULE_ONLY_WHEN_HOME,
     CONF_SCHEDULE_START,
@@ -63,6 +65,8 @@ def base_schedule(
     enabled: bool = True,
     only_when_home: bool = True,
     hvac_mode: str = DEFAULT_SCHEDULE_HVAC_MODE,
+    away_hvac_mode: str | None = None,
+    away_temperature: float | None = None,
     devices: list[str] | None = None,
     temperature: float = DEFAULT_SCHEDULE_TEMPERATURE,
     fan_mode: str = DEFAULT_SCHEDULE_FAN_MODE,
@@ -78,6 +82,10 @@ def base_schedule(
         CONF_SCHEDULE_TEMPERATURE: temperature,
         CONF_SCHEDULE_FAN_MODE: fan_mode,
     }
+    if away_hvac_mode:
+        schedule[CONF_SCHEDULE_AWAY_HVAC_MODE] = away_hvac_mode
+    if away_temperature is not None:
+        schedule[CONF_SCHEDULE_AWAY_TEMPERATURE] = away_temperature
     if end is not None:
         schedule[CONF_SCHEDULE_END] = end
     return schedule
@@ -110,10 +118,12 @@ def test_schedule_activation_with_presence(monkeypatch, dummy_hass: DummyHass):
     assert result.everyone_away is False
     assert result.anyone_home is True
     assert result.schedule_decisions["Morning"].is_active is True
-    assert result.device_decisions["climate.living_room"].should_be_active is True
-    assert result.device_decisions["climate.living_room"].hvac_mode == "heat"
-    assert result.device_decisions["climate.bedroom"].should_be_active is False
-    assert result.device_decisions["climate.bedroom"].hvac_mode == "off"
+    living = result.device_decisions["climate.living_room"]
+    bedroom = result.device_decisions["climate.bedroom"]
+    assert living.should_be_active is True
+    assert living.hvac_mode == "heat"
+    assert bedroom.should_be_active is False
+    assert bedroom.hvac_mode is None
 
 
 def test_schedule_activation_without_trackers_defaults_to_home(monkeypatch, dummy_hass: DummyHass):
@@ -141,6 +151,8 @@ def test_schedule_activation_without_trackers_defaults_to_home(monkeypatch, dumm
     assert result.everyone_away is False
     assert result.anyone_home is True
     assert result.schedule_decisions["Morning"].is_active is True
+    decision = result.device_decisions["climate.living_room"]
+    assert decision.hvac_mode == "heat"
     assert result.diagnostics.trackers_total == 0
     assert result.diagnostics.trackers_home == 0
 
@@ -224,6 +236,8 @@ def test_blank_tracker_entries_are_ignored(monkeypatch, dummy_hass: DummyHass):
     result = coordinator._calculate_heating_state()
 
     assert result.anyone_home is True
+    decision = result.device_decisions["climate.living_room"]
+    assert decision.hvac_mode == "heat"
     assert result.diagnostics.trackers_total == 1
     assert result.diagnostics.trackers_home == 1
 
@@ -245,10 +259,10 @@ def test_device_without_schedule_stays_idle(monkeypatch, dummy_hass: DummyHass):
 
     office = result.device_decisions["climate.office"]
     assert office.should_be_active is False
-    assert office.hvac_mode == "off"
+    assert office.hvac_mode is None
 
 
-def test_multiple_schedules_highest_temperature_wins(monkeypatch, dummy_hass: DummyHass):
+def test_last_schedule_wins(monkeypatch, dummy_hass: DummyHass):
     freeze_time(monkeypatch, 19, 0)
     dummy_hass.states.set("device_tracker.user1", DummyState("home", {}))
 
@@ -270,7 +284,7 @@ def test_multiple_schedules_highest_temperature_wins(monkeypatch, dummy_hass: Du
                 "19:00",
                 "21:00",
                 devices=["climate.kitchen"],
-                temperature=23.0,
+                temperature=19.0,
                 fan_mode="high",
             ),
         ],
@@ -282,9 +296,44 @@ def test_multiple_schedules_highest_temperature_wins(monkeypatch, dummy_hass: Du
     kitchen = result.device_decisions["climate.kitchen"]
     assert kitchen.should_be_active is True
     assert kitchen.hvac_mode == "heat"
-    assert kitchen.target_temp == 23.0
+    assert kitchen.target_temp == 19.0
     assert kitchen.target_fan == "high"
-    assert set(kitchen.active_schedules) == {"Evening Comfort", "Dinner Boost"}
+    assert kitchen.active_schedules == ("Dinner Boost",)
+
+
+def test_midnight_schedule_precedence(monkeypatch, dummy_hass: DummyHass):
+    freeze_time(monkeypatch, 0, 30)
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_DEVICE_TRACKERS: [],
+        CONF_CLIMATE_DEVICES: ["climate.bedroom"],
+        CONF_SCHEDULES: [
+            base_schedule(
+                "Late Night",
+                "23:30",
+                "06:00",
+                devices=["climate.bedroom"],
+                temperature=20.0,
+            ),
+            base_schedule(
+                "After Midnight",
+                "00:15",
+                "02:00",
+                devices=["climate.bedroom"],
+                temperature=24.0,
+            ),
+        ],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    bedroom = result.device_decisions["climate.bedroom"]
+    assert bedroom.should_be_active is True
+    assert bedroom.hvac_mode == "heat"
+    assert bedroom.target_temp == 24.0
+    assert bedroom.active_schedules == ("After Midnight",)
 
 
 def test_schedule_without_end_uses_next_start(monkeypatch, dummy_hass: DummyHass):
@@ -317,6 +366,10 @@ def test_schedule_without_end_uses_next_start(monkeypatch, dummy_hass: DummyHass
     assert morning_state.schedule_decisions["Morning"].in_time_window is True
     assert morning_state.schedule_decisions["Morning"].end_time == "18:00"
     assert morning_state.schedule_decisions["Evening"].in_time_window is False
+    morning_decision = morning_state.device_decisions["climate.living_room"]
+    assert morning_decision.active_schedules == ("Morning",)
+    assert morning_decision.hvac_mode == "heat"
+    assert morning_decision.target_temp == 21.0
 
     freeze_time(monkeypatch, 19, 0)
     coordinator_evening = make_coordinator(dummy_hass, config)
@@ -324,6 +377,9 @@ def test_schedule_without_end_uses_next_start(monkeypatch, dummy_hass: DummyHass
 
     assert evening_state.schedule_decisions["Morning"].in_time_window is False
     assert evening_state.schedule_decisions["Evening"].in_time_window is True
+    evening_decision = evening_state.device_decisions["climate.living_room"]
+    assert evening_decision.active_schedules == ("Evening",)
+    assert evening_decision.target_temp == 19.0
     assert evening_state.schedule_decisions["Evening"].end_time == "06:00"
 
 
@@ -347,6 +403,10 @@ def test_single_schedule_without_end_covers_full_day(monkeypatch, dummy_hass: Du
     morning_state = make_coordinator(dummy_hass, config)._calculate_heating_state()
     assert morning_state.schedule_decisions["AllDay"].in_time_window is True
     assert morning_state.schedule_decisions["AllDay"].end_time == "23:59"
+    decision_day = morning_state.device_decisions["climate.bedroom"]
+    assert decision_day.active_schedules == ("AllDay",)
+    assert decision_day.hvac_mode == "heat"
+    assert decision_day.target_temp == 20.5
 
     freeze_time(monkeypatch, 2, 0)
     overnight_state = make_coordinator(dummy_hass, config)._calculate_heating_state()
@@ -427,42 +487,66 @@ def test_daily_schedule_flow(monkeypatch, dummy_hass: DummyHass):
 
     freeze_time(monkeypatch, 8, 0)
     morning = coordinator._calculate_heating_state()
-    assert morning.device_decisions[kitchen].should_be_active is True
-    assert morning.device_decisions[kitchen].target_temp == 20.0
-    assert morning.device_decisions[bedroom1].should_be_active is True
-    assert morning.device_decisions[bedroom1].target_temp == 20.0
-    assert morning.device_decisions[bedroom2].should_be_active is True
-    assert morning.device_decisions[bedroom2].target_temp == 20.0
+    morning_kitchen = morning.device_decisions[kitchen]
+    morning_bedroom1 = morning.device_decisions[bedroom1]
+    morning_bedroom2 = morning.device_decisions[bedroom2]
+    assert morning_kitchen.active_schedules == ("Morning Warmup",)
+    assert morning_kitchen.hvac_mode == "heat"
+    assert morning_kitchen.target_temp == 20.0
+    assert morning_bedroom1.active_schedules == ("Morning Warmup",)
+    assert morning_bedroom1.hvac_mode == "heat"
+    assert morning_bedroom1.target_temp == 20.0
+    assert morning_bedroom2.active_schedules == ("Morning Warmup",)
+    assert morning_bedroom2.hvac_mode == "heat"
+    assert morning_bedroom2.target_temp == 20.0
 
     freeze_time(monkeypatch, 11, 0)
     midday = coordinator._calculate_heating_state()
-    assert midday.device_decisions[kitchen].should_be_active is True
-    assert midday.device_decisions[kitchen].target_temp == 20.0
-    assert midday.device_decisions[bedroom1].should_be_active is False
-    assert midday.device_decisions[bedroom2].should_be_active is False
+    midday_kitchen = midday.device_decisions[kitchen]
+    midday_bedroom1 = midday.device_decisions[bedroom1]
+    midday_bedroom2 = midday.device_decisions[bedroom2]
+    assert midday_kitchen.active_schedules == ("Daytime Kitchen",)
+    assert midday_kitchen.target_temp == 20.0
+    assert midday_bedroom1.should_be_active is False
+    assert midday_bedroom1.hvac_mode is None
+    assert midday_bedroom2.should_be_active is False
+    assert midday_bedroom2.hvac_mode is None
 
     freeze_time(monkeypatch, 19, 30)
     evening = coordinator._calculate_heating_state()
-    assert evening.device_decisions[kitchen].should_be_active is True
-    assert evening.device_decisions[kitchen].target_temp == 20.0
-    assert evening.device_decisions[bedroom2].should_be_active is True
-    assert evening.device_decisions[bedroom2].target_temp == 22.0
-    assert evening.device_decisions[bedroom1].should_be_active is False
+    evening_kitchen = evening.device_decisions[kitchen]
+    evening_bedroom2 = evening.device_decisions[bedroom2]
+    evening_bedroom1 = evening.device_decisions[bedroom1]
+    assert evening_kitchen.active_schedules == ("Evening Kitchen",)
+    assert evening_kitchen.target_temp == 20.0
+    assert evening_bedroom2.active_schedules == ("Evening Bedroom2",)
+    assert evening_bedroom2.target_temp == 22.0
+    assert evening_bedroom1.should_be_active is False
+    assert evening_bedroom1.hvac_mode is None
 
     freeze_time(monkeypatch, 21, 30)
     night = coordinator._calculate_heating_state()
-    assert night.device_decisions[kitchen].should_be_active is True
-    assert night.device_decisions[kitchen].target_temp == 20.0
-    assert night.device_decisions[bedroom2].should_be_active is True
-    assert night.device_decisions[bedroom2].target_temp == 22.0
-    assert night.device_decisions[bedroom1].should_be_active is True
-    assert night.device_decisions[bedroom1].target_temp == 20.0
+    night_kitchen = night.device_decisions[kitchen]
+    night_bedroom2 = night.device_decisions[bedroom2]
+    night_bedroom1 = night.device_decisions[bedroom1]
+    assert night_kitchen.active_schedules == ("Night Kitchen",)
+    assert night_kitchen.target_temp == 20.0
+    assert night_bedroom2.active_schedules == ("Night Bedroom2",)
+    assert night_bedroom2.target_temp == 22.0
+    assert night_bedroom1.active_schedules == ("Night Bedroom1",)
+    assert night_bedroom1.target_temp == 20.0
 
     freeze_time(monkeypatch, 23, 30)
     lights_out = coordinator._calculate_heating_state()
+    # At 23:00, "Lights Out" schedule starts with no devices
+    # This ends the time windows for all previous schedules
+    # Since "Lights Out" has no devices, all devices have no active schedule
     assert lights_out.device_decisions[kitchen].should_be_active is False
+    assert lights_out.device_decisions[kitchen].active_schedules == ()
     assert lights_out.device_decisions[bedroom1].should_be_active is False
+    assert lights_out.device_decisions[bedroom1].active_schedules == ()
     assert lights_out.device_decisions[bedroom2].should_be_active is False
+    assert lights_out.device_decisions[bedroom2].active_schedules == ()
 def test_schedule_requires_presence(monkeypatch, dummy_hass: DummyHass):
     freeze_time(monkeypatch, 15, 0)
     dummy_hass.states.set("device_tracker.user1", DummyState("not_home", {}))
@@ -489,8 +573,41 @@ def test_schedule_requires_presence(monkeypatch, dummy_hass: DummyHass):
 
     assert result.everyone_away is True
     assert result.anyone_home is False
-    assert result.schedule_decisions["Afternoon"].is_active is False
+    # Schedule stays active in time window, but presence affects settings
+    assert result.schedule_decisions["Afternoon"].is_active is True
     assert result.device_decisions["climate.bedroom"].should_be_active is False
+    # With only_when_home=True and nobody home, device is turned off
+    assert result.device_decisions["climate.bedroom"].hvac_mode == "off"
+
+
+def test_schedule_away_settings_used_when_empty(monkeypatch, dummy_hass: DummyHass):
+    freeze_time(monkeypatch, 8, 0)
+    dummy_hass.states.set("device_tracker.alice", DummyState("not_home", {}))
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_DEVICE_TRACKERS: ["device_tracker.alice"],
+        CONF_CLIMATE_DEVICES: ["climate.office"],
+        CONF_SCHEDULES: [
+            base_schedule(
+                "Workday",
+                "07:00",
+                "18:00",
+                devices=["climate.office"],
+                temperature=21.0,
+                away_hvac_mode="off",
+                away_temperature=None,
+            )
+        ],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    decision = result.device_decisions["climate.office"]
+    assert decision.hvac_mode == "off"
+    assert decision.should_be_active is False
+    assert decision.target_temp is None
 
 
 def test_multiple_trackers_presence_counts(monkeypatch, dummy_hass: DummyHass):

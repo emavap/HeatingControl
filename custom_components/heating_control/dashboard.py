@@ -19,6 +19,8 @@ from .const import (
     ENTITY_DECISION_DIAGNOSTICS,
     ENTITY_EVERYONE_AWAY,
     SCHEDULE_SWITCH_ENTITY_TEMPLATE,
+    SCHEDULE_BINARY_ENTITY_TEMPLATE,
+    DEVICE_BINARY_ENTITY_TEMPLATE,
 )
 
 if TYPE_CHECKING:
@@ -247,7 +249,7 @@ class HeatingControlDashboardStrategy(Strategy):
 
             device_entities = [
                 {
-                    "entity": self._device_binary_entity(device_entity),
+                    "entity": self._device_binary_entity(entry_id, device_entity),
                     "name": self._friendly_name(device_entity),
                 }
                 for device_entity in climate_entities
@@ -359,7 +361,9 @@ class HeatingControlDashboardStrategy(Strategy):
                     },
                     "hold_action": {
                         "action": "more-info",
-                        "entity": self._schedule_binary_entity(decision.name),
+                        "entity": self._schedule_binary_entity(
+                            entry_id, decision.schedule_id
+                        ),
                     },
                 }
             )
@@ -367,9 +371,12 @@ class HeatingControlDashboardStrategy(Strategy):
         return cards
 
     @staticmethod
-    def _schedule_binary_entity(schedule_name: str) -> str:
+    def _schedule_binary_entity(entry_id: str, schedule_id: str) -> str:
         """Return the binary sensor entity id for a schedule."""
-        return f"binary_sensor.{slugify(f'Heating Schedule {schedule_name}')}"
+        return SCHEDULE_BINARY_ENTITY_TEMPLATE.format(
+            entry=slugify(entry_id),
+            schedule=slugify(schedule_id),
+        )
 
     @staticmethod
     def _schedule_switch_entity(entry_id: str, schedule_id: str) -> str:
@@ -390,7 +397,13 @@ class HeatingControlDashboardStrategy(Strategy):
         if decision.only_when_home:
             parts.append("Home required")
 
-        parts.append(f"Mode {decision.hvac_mode}")
+        if decision.schedule_device_trackers:
+            tracker_count = len(decision.schedule_device_trackers)
+            parts.append(f"{tracker_count} tracker{'s' if tracker_count > 1 else ''}")
+
+        parts.append(f"Home {decision.hvac_mode_home}")
+        if decision.hvac_mode_away:
+            parts.append(f"Away {decision.hvac_mode_away}")
 
         if decision.device_count:
             device_suffix = "device" if decision.device_count == 1 else "devices"
@@ -399,11 +412,13 @@ class HeatingControlDashboardStrategy(Strategy):
         return " • ".join(parts)
 
     @staticmethod
-    def _device_binary_entity(climate_entity: str) -> str:
+    def _device_binary_entity(entry_id: str, climate_entity: str) -> str:
         """Return the binary sensor entity id for a managed climate device."""
         suffix = climate_entity.replace("climate.", "").replace(".", "_")
-        friendly = suffix.replace("_", " ")
-        return f"binary_sensor.{slugify(f'Heating {friendly}')}"
+        return DEVICE_BINARY_ENTITY_TEMPLATE.format(
+            entry=slugify(entry_id),
+            device=slugify(suffix),
+        )
 
     @staticmethod
     def _build_message(title: str, message: str) -> Dict[str, Any]:

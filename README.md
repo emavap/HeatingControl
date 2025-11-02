@@ -26,9 +26,6 @@ HeatingControl/
 │       ├── manifest.json
 │       ├── sensor.py
 │       └── strings.json
-├── examples/
-│   └── automations/
-│       └── smart_house_heating_control.yaml
 ├── tests/
 └── README.md
 ```
@@ -75,6 +72,7 @@ For each schedule, configure:
 - **Fan Mode**: Fan mode for this schedule (default: "auto")
 - **Start Time**: When schedule becomes active (default: 00:00)
 - **Automatic End**: The schedule stays active until another schedule begins
+- **Away HVAC Mode & Temperature (optional)**: Fallback settings used when the schedule is active but everyone is away
 - **Only When Home**: Schedule only active when someone is home
 - **Devices**: Select which climate devices this schedule controls
 
@@ -92,7 +90,7 @@ Every 60 seconds, the integration:
 2. **Determines Device States**:
    - Devices can be assigned to **multiple schedules**
    - If **any** active schedule includes a device, it should be on
-   - Devices not in any schedule: depend on "Only Scheduled Devices Active" setting
+   - Devices not in any schedule: are left alone (not controlled by integration)
    - **Temperature Selection**: When a device is in multiple active schedules with different temperatures, the **highest temperature wins**
    - **Fan Mode**: Uses the fan mode from the schedule with the highest temperature
 
@@ -170,37 +168,38 @@ For each managed climate device:
 6. **Final settle**: If the HVAC mode changed during this cycle, wait an additional 2 seconds before moving on
 7. **Store the command**: Record the values that were just sent so future cycles can skip redundant calls
 
-### Why Highest Temperature Wins?
+### How Schedule Precedence Works
 
-The "highest temperature wins" logic ensures user comfort in complex scenarios:
+If multiple schedules overlap for the same device, Heating Control always honours the **most recently started schedule**. That means:
 
-- **Safety**: If multiple schedules are active, the warmest setting takes priority
-- **Comfort**: Users won't be cold because one schedule set a lower temperature
-- **Flexibility**: You can have overlapping schedules without conflicts
-- **Intuitive**: Most users expect "warmer" to take priority over "cooler"
+- As soon as a later schedule starts, it takes full control of the device.
+- Earlier schedules remain visible for diagnostics, but they no longer influence the device until they start again.
+- When there's no active schedule for a device, the integration leaves it exactly as it is—no safety net or "default on" behavior.
 
-**Real-World Example:**
+**Example:**
 
 ```
-Bedroom AC is in two schedules:
-1. "Night Sleep": 18°C (22:00 - 07:00) - for sleeping comfort
-2. "Cold Weather Boost": 22°C (Starts at 05:00, only when temp < 10°C outside)
+Kitchen AC is in these schedules:
+1. "Morning Warmup" – starts 07:00, Heat 20 °C
+2. "Daytime Kitchen" – starts 10:00, Heat 20 °C
+3. "Evening Kitchen" – starts 19:00, Heat 20 °C
+4. "Night Kitchen" – starts 21:00, Off
 
-On a very cold night:
-- Both schedules are active
-- Integration uses 22°C (highest) to ensure you stay warm
-- Without this logic, you might freeze at 18°C on cold nights
+At 19:30, "Evening Kitchen" is the most recent start, so it dictates the settings.
+At 21:30, "Night Kitchen" has taken over and turns the device off.
 ```
+
+This "last schedule wins" rule applies regardless of the requested temperatures or HVAC modes—so if you want a device to cool instead of heat after 19:00, just add a schedule that starts at 19:00 with `hvac_mode: cool`.
 
 ### Schedule Priority and Conflicts
 
-**Q: What if two schedules have the same highest temperature but different fan modes?**
+**Q: What if two schedules start at the exact same time?**
 
-A: The integration uses the first schedule encountered with that temperature. The order is deterministic (based on how schedules are stored), but you should avoid this scenario by setting slightly different temperatures (e.g., 20.0°C vs 20.5°C) if the fan mode matters.
+A: The order they appear in the configuration breaks the tie—the later entry wins.
 
-**Q: Can I have a schedule that LOWERS temperature if another schedule set it higher?**
+**Q: Can I have a schedule that applies different settings when no-one is home?**
 
-A: No. The "highest temperature wins" rule always applies. If you need devices at different temperatures, assign them to separate schedules, not overlapping ones.
+A: Yes. Each schedule can optionally define an "away" HVAC mode and temperature. When the schedule is active but everyone is away, those away values are used. Leave the away fields blank if you want the schedule to pause when nobody is home.
 
 **Q: What about devices not in any schedule?**
 
@@ -337,21 +336,7 @@ The integration **automatically controls** all configured climate devices every 
 
 ### Monitoring with Binary Sensors
 
-Binary sensors are provided for monitoring and creating custom notifications or additional automations:
-
-```yaml
-# Example: Notify when specific schedule becomes active
-automation:
-  - alias: "Heating Night Mode Active"
-    trigger:
-      - platform: state
-        entity_id: binary_sensor.heating_schedule_bedroom_night
-        to: "on"
-    action:
-      - service: notify.mobile_app
-        data:
-          message: "Bedroom night heating activated at {{ state_attr('binary_sensor.heating_schedule_bedroom_night', 'target_temp') }}°C"
-```
+Binary sensors are provided for monitoring schedule states and device activity. Each schedule has a corresponding binary sensor that shows its active status and exposes attributes like target temperature, HVAC mode, and assigned devices.
 
 ## Development
 
@@ -405,10 +390,6 @@ The dashboard will regenerate based on your current configuration.
 ### Services
 
 Heating Control exposes the `heating_control.set_schedule_enabled` service so automations and dashboards can enable or disable schedules programmatically. Provide either a `schedule_id` (preferred) or `schedule_name`, plus an optional `entry_id` when multiple integration instances exist.
-
-### Example Lovelace YAML
-
-Prefer manual control? The `examples/dashboards/smart_heating_dashboard.yaml` file mirrors the original sample layout. Copy it into a YAML dashboard and adjust the entity IDs for your environment.
 
 ### Project Structure
 

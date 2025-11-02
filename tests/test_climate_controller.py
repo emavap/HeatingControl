@@ -172,3 +172,25 @@ async def test_switch_to_cool_mode(dummy_hass: DummyHass, no_sleep):
     ])
 
     assert dummy_hass.services.calls[0]["data"]["hvac_mode"] == "cool"
+
+
+@pytest.mark.asyncio
+async def test_no_action_when_hvac_mode_missing(dummy_hass: DummyHass, no_sleep):
+    dummy_hass.states.set(
+        "climate.attic",
+        DummyState("heat", {}),
+    )
+    controller = make_controller(dummy_hass)
+
+    await controller.async_apply([
+        DeviceDecision(
+            entity_id="climate.attic",
+            should_be_active=False,
+            active_schedules=tuple(),
+            hvac_mode=None,
+            target_temp=None,
+            target_fan=None,
+        )
+    ])
+
+    assert dummy_hass.services.calls == []

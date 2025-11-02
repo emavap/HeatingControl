@@ -33,10 +33,13 @@ from custom_components.heating_control.const import (
     CONF_DEVICE_TRACKERS,
     CONF_SCHEDULES,
     CONF_SCHEDULE_DEVICES,
+    CONF_SCHEDULE_DEVICE_TRACKERS,
     CONF_SCHEDULE_ENABLED,
     CONF_SCHEDULE_END,
     CONF_SCHEDULE_FAN_MODE,
     CONF_SCHEDULE_HVAC_MODE,
+    CONF_SCHEDULE_AWAY_HVAC_MODE,
+    CONF_SCHEDULE_AWAY_TEMPERATURE,
     CONF_SCHEDULE_NAME,
     CONF_SCHEDULE_ONLY_WHEN_HOME,
     CONF_SCHEDULE_START,
@@ -76,6 +79,8 @@ def mock_config_entry():
                     CONF_SCHEDULE_TEMPERATURE: 21.0,
                     CONF_SCHEDULE_FAN_MODE: "auto",
                     CONF_SCHEDULE_HVAC_MODE: "heat",
+                    CONF_SCHEDULE_AWAY_HVAC_MODE: "off",
+                    CONF_SCHEDULE_AWAY_TEMPERATURE: 16.0,
                     CONF_SCHEDULE_ONLY_WHEN_HOME: True,
                     CONF_SCHEDULE_DEVICES: ["climate.bedroom"],
                 },
@@ -100,6 +105,7 @@ def mock_config_entry():
                     CONF_SCHEDULE_TEMPERATURE: 18.0,
                     CONF_SCHEDULE_FAN_MODE: "low",
                     CONF_SCHEDULE_HVAC_MODE: "off",
+                    CONF_SCHEDULE_AWAY_HVAC_MODE: "off",
                     CONF_SCHEDULE_ONLY_WHEN_HOME: True,
                     CONF_SCHEDULE_DEVICES: [],
                 },
@@ -165,7 +171,7 @@ def test_build_schedule_options_with_schedules(mock_config_entry):
     assert len(options) == 3
 
     # First option should be formatted correctly
-    assert options[0]["label"] == "1. Morning (starts 07:00, mode heat)"
+    assert options[0]["label"] == "1. Morning (starts 07:00, mode heat / away off)"
     assert options[0]["value"] == "0"
 
     # Second option
@@ -173,7 +179,7 @@ def test_build_schedule_options_with_schedules(mock_config_entry):
     assert options[1]["value"] == "1"
 
     # Third option
-    assert options[2]["label"] == "3. Night (starts 22:00, mode off)"
+    assert options[2]["label"] == "3. Night (starts 22:00, mode off / away off)"
     assert options[2]["value"] == "2"
 
 

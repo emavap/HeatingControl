@@ -16,6 +16,7 @@ from .const import (
     CONF_DEVICE_TRACKERS,
     CONF_SCHEDULES,
     CONF_SCHEDULE_DEVICES,
+    CONF_SCHEDULE_DEVICE_TRACKERS,
     CONF_SCHEDULE_ENABLED,
     CONF_SCHEDULE_END,
     CONF_SCHEDULE_FAN_MODE,
@@ -23,12 +24,15 @@ from .const import (
     CONF_SCHEDULE_NAME,
     CONF_SCHEDULE_ONLY_WHEN_HOME,
     CONF_SCHEDULE_HVAC_MODE,
+    CONF_SCHEDULE_AWAY_HVAC_MODE,
+    CONF_SCHEDULE_AWAY_TEMPERATURE,
     CONF_SCHEDULE_START,
     CONF_SCHEDULE_TEMPERATURE,
     DEFAULT_FINAL_SETTLE,
     DEFAULT_SCHEDULE_END,
     DEFAULT_SCHEDULE_FAN_MODE,
     DEFAULT_SCHEDULE_HVAC_MODE,
+    DEFAULT_SCHEDULE_AWAY_HVAC_MODE,
     DEFAULT_SCHEDULE_START,
     DEFAULT_SCHEDULE_TEMPERATURE,
     DEFAULT_SETTLE_SECONDS,
@@ -39,6 +43,8 @@ from .controller import ClimateController
 from .models import DeviceDecision, DiagnosticsSnapshot, HeatingStateSnapshot, ScheduleDecision
 
 _LOGGER = logging.getLogger(__name__)
+
+MINUTES_PER_DAY = 24 * 60
 
 
 class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
@@ -292,6 +298,13 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         schedule_decisions: Dict[str, ScheduleDecision] = {}
         device_builders: Dict[str, List[Dict[str, Any]]] = {}
 
+        try:
+            now_hours, now_minutes_str = now_hm.split(":")
+            now_minutes = int(now_hours) * 60 + int(now_minutes_str)
+        except (ValueError, AttributeError):
+            _LOGGER.debug("Invalid time '%s' while evaluating schedules; defaulting to 00:00", now_hm)
+            now_minutes = 0
+
         auto_end_times = self._derive_auto_end_times(schedules)
 
         for index, schedule in enumerate(schedules):
@@ -308,14 +321,52 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 end_time = str(configured_end)[:5]
             else:
                 end_time = auto_end_times.get(schedule_id, DEFAULT_SCHEDULE_END)
+
+            try:
+                start_hours, start_minutes = start_time.split(":")
+                start_value = int(start_hours) * 60 + int(start_minutes)
+            except (ValueError, AttributeError):
+                _LOGGER.warning(
+                    "Invalid start_time format for schedule %s: %s, defaulting to 00:00",
+                    schedule_name,
+                    start_time,
+                )
+                start_value = 0
+            start_age = (now_minutes - start_value) % MINUTES_PER_DAY
+
             only_when_home = schedule.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True)
-            hvac_mode = str(
+
+            # Per-schedule presence tracking
+            schedule_trackers = schedule.get(CONF_SCHEDULE_DEVICE_TRACKERS, [])
+            if schedule_trackers:
+                # Schedule has specific trackers: check if any are home
+                schedule_anyone_home = any(
+                    self._is_tracker_home(tracker) for tracker in schedule_trackers
+                )
+            else:
+                # No specific trackers: fall back to global presence
+                schedule_anyone_home = anyone_home
+
+            hvac_mode_home = str(
                 schedule.get(CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE)
             ).lower()
-            device_entities = schedule.get(CONF_SCHEDULE_DEVICES, [])
-            schedule_temp = float(
-                schedule.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE)
+            hvac_mode_away_raw = schedule.get(CONF_SCHEDULE_AWAY_HVAC_MODE)
+            hvac_mode_away = (
+                str(hvac_mode_away_raw).lower()
+                if hvac_mode_away_raw not in (None, "", "inherit")
+                else None
             )
+
+            device_entities = schedule.get(CONF_SCHEDULE_DEVICES, [])
+            schedule_temp_home = schedule.get(CONF_SCHEDULE_TEMPERATURE)
+            if schedule_temp_home is None:
+                schedule_temp_home = DEFAULT_SCHEDULE_TEMPERATURE
+            schedule_temp_home = float(schedule_temp_home)
+
+            schedule_temp_away = schedule.get(CONF_SCHEDULE_AWAY_TEMPERATURE)
+            if schedule_temp_away is not None:
+                schedule_temp_away = float(schedule_temp_away)
+
             schedule_fan = schedule.get(
                 CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE
             )
@@ -323,17 +374,48 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             in_time_window = self._is_time_in_schedule(
                 now_hm, start_time, end_time
             )
-            presence_ok = (not only_when_home) or anyone_home
+            presence_ok = schedule_anyone_home or not only_when_home
+            has_away_settings = hvac_mode_away is not None
+
+            # Schedule is active if in time window (presence affects settings, not activation)
             is_active = (
-                auto_heating_enabled and enabled and in_time_window and presence_ok
+                auto_heating_enabled
+                and enabled
+                and in_time_window
             )
+
+            # Determine effective settings based on schedule-specific presence
+            if schedule_anyone_home:
+                # Someone home (per schedule trackers): use home settings
+                effective_hvac_mode = hvac_mode_home
+                effective_temp = schedule_temp_home
+            elif has_away_settings:
+                # Nobody home but we have away settings: use them
+                effective_hvac_mode = hvac_mode_away
+                effective_temp = schedule_temp_away
+            elif only_when_home:
+                # Nobody home, no away settings, schedule requires presence: turn off
+                effective_hvac_mode = "off"
+                effective_temp = None
+            else:
+                # Nobody home, no away settings, schedule doesn't require presence: use home settings
+                effective_hvac_mode = hvac_mode_home
+                effective_temp = schedule_temp_home
+
+            if effective_hvac_mode in (None, "off"):
+                effective_temp = None
+                effective_fan = None
+            else:
+                effective_fan = schedule_fan
 
             schedule_decisions[schedule_id] = ScheduleDecision(
                 schedule_id=schedule_id,
                 name=schedule_name,
                 start_time=start_time,
                 end_time=end_time,
-                hvac_mode=hvac_mode,
+                hvac_mode=effective_hvac_mode or "off",
+                hvac_mode_home=hvac_mode_home,
+                hvac_mode_away=hvac_mode_away,
                 only_when_home=only_when_home,
                 enabled=enabled,
                 is_active=is_active,
@@ -341,8 +423,13 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 presence_ok=presence_ok,
                 device_count=len(device_entities),
                 devices=tuple(device_entities),
-                target_temp=schedule_temp,
-                target_fan=schedule_fan,
+                schedule_device_trackers=tuple(schedule_trackers),
+                target_temp=effective_temp,
+                target_temp_home=schedule_temp_home if hvac_mode_home != "off" else None,
+                target_temp_away=(
+                    schedule_temp_away if hvac_mode_away and hvac_mode_away != "off" else None
+                ),
+                target_fan=effective_fan,
             )
 
             if not is_active:
@@ -353,9 +440,11 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                     {
                         "schedule_name": schedule_name,
                         "order": index,
-                        "hvac_mode": hvac_mode,
-                        "temperature": schedule_temp,
-                        "fan_mode": schedule_fan,
+                        "start_minutes": start_value,
+                        "start_age": start_age,
+                        "hvac_mode": effective_hvac_mode,
+                        "temperature": effective_temp,
+                        "fan_mode": effective_fan,
                     }
                 )
 
@@ -372,20 +461,17 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
         for device_entity in all_devices:
             entries = device_builders.get(device_entity, [])
-            active_schedules = tuple(entry["schedule_name"] for entry in entries)
 
-            hvac_mode, target_temp, target_fan = self._select_device_targets(entries)
+            hvac_mode, target_temp, target_fan, schedule_name = self._select_device_targets(
+                entries
+            )
 
-            should_be_active = hvac_mode != "off"
-            if target_temp is None:
-                target_temp = DEFAULT_SCHEDULE_TEMPERATURE
-            if target_fan is None:
-                target_fan = DEFAULT_SCHEDULE_FAN_MODE
+            should_be_active = hvac_mode not in (None, "off")
 
             device_decisions[device_entity] = DeviceDecision(
                 entity_id=device_entity,
                 should_be_active=should_be_active,
-                active_schedules=active_schedules,
+                active_schedules=(schedule_name,) if schedule_name else tuple(),
                 hvac_mode=hvac_mode,
                 target_temp=target_temp,
                 target_fan=target_fan,
@@ -396,35 +482,33 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
     @staticmethod
     def _select_device_targets(
         entries: List[Dict[str, Any]]
-    ) -> Tuple[str, Optional[float], Optional[str]]:
+    ) -> Tuple[Optional[str], Optional[float], Optional[str], Optional[str]]:
         """Select the hvac mode, temperature, and fan for a device."""
         if not entries:
-            return "off", None, None
+            return None, None, None, None
 
-        hvac_priority = {
-            "off": 3,
-            "heat": 2,
-            "cool": 2,
-            "dry": 1,
-            "fan_only": 1,
-            "auto": 1,
-        }
-
-        def entry_key(entry: Dict[str, Any]) -> Tuple[int, float, int]:
-            mode = entry.get("hvac_mode", "heat")
-            priority = hvac_priority.get(mode, 1)
-            temperature = entry.get("temperature")
-            temp_value = temperature if temperature is not None else float("-inf")
-            order = entry.get("order", 0)
-            return (priority, temp_value, -order)
+        def entry_key(entry: Dict[str, Any]) -> Tuple[int, int]:
+            age = entry.get("start_age")
+            if age is None:
+                return (
+                    entry.get("start_minutes", 0),
+                    entry.get("order", 0),
+                )
+            freshness = MINUTES_PER_DAY - int(age)
+            return (
+                freshness,
+                entry.get("order", 0),
+            )
 
         best = max(entries, key=entry_key)
-        mode = best.get("hvac_mode", "heat")
+        mode = best.get("hvac_mode")
+        temperature = best.get("temperature")
+        fan_mode = best.get("fan_mode")
 
-        if mode == "off":
-            return "off", None, None
+        if mode in (None, "off"):
+            return mode, None, None, best.get("schedule_name")
 
-        return mode, best.get("temperature"), best.get("fan_mode")
+        return mode, temperature, fan_mode, best.get("schedule_name")
 
     async def async_set_schedule_enabled(
         self,

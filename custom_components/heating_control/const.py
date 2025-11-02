@@ -14,7 +14,10 @@ CONF_SCHEDULE_ENABLED = "enabled"
 CONF_SCHEDULE_START = "start_time"
 CONF_SCHEDULE_END = "end_time"
 CONF_SCHEDULE_ONLY_WHEN_HOME = "only_when_home"
+CONF_SCHEDULE_DEVICE_TRACKERS = "schedule_device_trackers"
 CONF_SCHEDULE_HVAC_MODE = "hvac_mode"
+CONF_SCHEDULE_AWAY_HVAC_MODE = "away_hvac_mode"
+CONF_SCHEDULE_AWAY_TEMPERATURE = "away_temperature"
 CONF_SCHEDULE_DEVICES = "device_entities"
 CONF_SCHEDULE_TEMPERATURE = "temperature"
 CONF_SCHEDULE_FAN_MODE = "fan_mode"
@@ -28,6 +31,7 @@ DEFAULT_SCHEDULE_END = "23:59"
 DEFAULT_SCHEDULE_TEMPERATURE = 20.0
 DEFAULT_SCHEDULE_FAN_MODE = "auto"
 DEFAULT_SCHEDULE_HVAC_MODE = "heat"
+DEFAULT_SCHEDULE_AWAY_HVAC_MODE = "off"
 DEFAULT_SETTLE_SECONDS = 5
 DEFAULT_FINAL_SETTLE = 2
 
@@ -49,6 +53,8 @@ ATTR_SCHEDULE_NAME = "schedule_name"
 
 # Entity naming
 SCHEDULE_SWITCH_ENTITY_TEMPLATE = "switch.heating_schedule_{entry}_{schedule}_enabled"
+SCHEDULE_BINARY_ENTITY_TEMPLATE = "binary_sensor.heating_schedule_{entry}_{schedule}_active"
+DEVICE_BINARY_ENTITY_TEMPLATE = "binary_sensor.heating_device_{entry}_{device}"
 
 # Entity IDs
 ENTITY_DECISION_DIAGNOSTICS = "sensor.heating_control_decision_diagnostics"

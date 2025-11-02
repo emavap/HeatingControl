@@ -29,18 +29,22 @@
         "data": {
           "name": "Schedule Name",
           "enabled": "Schedule Enabled",
-          "hvac_mode": "HVAC Mode",
+          "hvac_mode": "HVAC Mode (when home)",
           "temperature": "Target Temperature",
           "fan_mode": "Fan Mode",
           "start_time": "Start Time",
           "only_when_home": "Only Active When Someone is Home",
+          "schedule_device_trackers": "Device Trackers for Presence (optional)",
+          "away_hvac_mode": "HVAC Mode When Everyone Away (optional)",
+          "away_temperature": "Temperature When Away (optional)",
           "device_entities": "Devices for this Schedule (optional)"
         }
       }
     },
     "error": {
       "unknown": "Unexpected error occurred",
-      "no_devices": "Please select at least one climate device"
+      "no_devices": "Please select at least one climate device",
+      "away_temp_without_mode": "Away temperature requires an away HVAC mode to be selected"
     },
     "abort": {
       "already_configured": "Heating Control is already configured"
@@ -76,14 +80,22 @@
         "data": {
           "name": "Schedule Name",
           "enabled": "Schedule Enabled",
-          "hvac_mode": "HVAC Mode",
+          "hvac_mode": "HVAC Mode (when home)",
           "temperature": "Target Temperature",
           "fan_mode": "Fan Mode",
           "start_time": "Start Time",
           "only_when_home": "Only Active When Someone is Home",
+          "schedule_device_trackers": "Device Trackers for Presence (optional)",
+          "away_hvac_mode": "HVAC Mode When Everyone Away (optional)",
+          "away_temperature": "Temperature When Away (optional)",
           "device_entities": "Devices for this Schedule (optional)"
         }
       }
+    },
+    "error": {
+      "unknown": "Unexpected error occurred",
+      "no_devices": "Please select at least one climate device",
+      "away_temp_without_mode": "Away temperature requires an away HVAC mode to be selected"
     }
   }
 }

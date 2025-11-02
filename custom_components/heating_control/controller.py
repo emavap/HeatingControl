@@ -18,7 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 class _DeviceCommandState:
     """Track the last command sent to a device."""
 
-    hvac_mode: str
+    hvac_mode: Optional[str]
     temperature: Optional[float]
     fan: Optional[str]
 
@@ -57,6 +57,11 @@ class ClimateController:
         target_temp = decision.target_temp
         target_fan = decision.target_fan
 
+        if hvac_mode is None:
+            _LOGGER.debug("No HVAC mode specified for %s; leaving device untouched", entity_id)
+            self._history.pop(entity_id, None)
+            return
+
         state = self._hass.states.get(entity_id)
         if not state or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             _LOGGER.debug("Skipping %s – entity state unavailable (%s)", entity_id, state)
@@ -71,8 +76,10 @@ class ClimateController:
         should_be_on = hvac_mode != "off"
 
         state_changed = previous_mode != hvac_mode
-        temp_changed = should_be_on and (
-            previous_temp is None or abs(previous_temp - target_temp) > 0.01
+        temp_changed = (
+            should_be_on
+            and target_temp is not None
+            and (previous_temp is None or abs(previous_temp - target_temp) > 0.01)
         )
         fan_changed = should_be_on and target_fan is not None and previous_fan != target_fan
 

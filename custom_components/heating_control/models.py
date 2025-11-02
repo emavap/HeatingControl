@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Mapping, Tuple
+from typing import Dict, Mapping, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -14,6 +14,8 @@ class ScheduleDecision:
     start_time: str
     end_time: str
     hvac_mode: str
+    hvac_mode_home: str
+    hvac_mode_away: Optional[str]
     only_when_home: bool
     enabled: bool
     is_active: bool
@@ -21,8 +23,11 @@ class ScheduleDecision:
     presence_ok: bool
     device_count: int
     devices: Tuple[str, ...]
-    target_temp: float
-    target_fan: str
+    schedule_device_trackers: Tuple[str, ...]
+    target_temp: Optional[float]
+    target_temp_home: Optional[float]
+    target_temp_away: Optional[float]
+    target_fan: Optional[str]
 
     def as_dict(self) -> Dict[str, object]:
         """Return a dictionary representation used by diagnostics and sensors."""
@@ -32,6 +37,8 @@ class ScheduleDecision:
             "start_time": self.start_time,
             "end_time": self.end_time,
             "hvac_mode": self.hvac_mode,
+            "hvac_mode_home": self.hvac_mode_home,
+            "hvac_mode_away": self.hvac_mode_away,
             "only_when_home": self.only_when_home,
             "enabled": self.enabled,
             "is_active": self.is_active,
@@ -39,7 +46,10 @@ class ScheduleDecision:
             "presence_ok": self.presence_ok,
             "device_count": self.device_count,
             "devices": list(self.devices),
+            "schedule_device_trackers": list(self.schedule_device_trackers),
             "target_temp": self.target_temp,
+            "target_temp_home": self.target_temp_home,
+            "target_temp_away": self.target_temp_away,
             "target_fan": self.target_fan,
         }
 
@@ -51,9 +61,9 @@ class DeviceDecision:
     entity_id: str
     should_be_active: bool
     active_schedules: Tuple[str, ...]
-    hvac_mode: str
-    target_temp: float
-    target_fan: str
+    hvac_mode: Optional[str]
+    target_temp: Optional[float]
+    target_fan: Optional[str]
 
     def as_dict(self) -> Dict[str, object]:
         """Return a dictionary representation used by diagnostics and sensors."""

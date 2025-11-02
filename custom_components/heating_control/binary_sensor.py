@@ -9,10 +9,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from .const import (
     DOMAIN,
     BINARY_SENSOR_EVERYONE_AWAY,
+    SCHEDULE_BINARY_ENTITY_TEMPLATE,
+    DEVICE_BINARY_ENTITY_TEMPLATE,
 )
 from .coordinator import HeatingControlCoordinator
 
@@ -102,6 +105,11 @@ class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._attr_name = f"Heating Schedule {schedule_name}"
         self._attr_icon = "mdi:calendar-clock"
         self._attr_device_class = BinarySensorDeviceClass.RUNNING
+        slug_entry = slugify(entry.entry_id)
+        slug_schedule = slugify(schedule_id or schedule_name)
+        self.entity_id = SCHEDULE_BINARY_ENTITY_TEMPLATE.format(
+            entry=slug_entry, schedule=slug_schedule
+        )
 
     @property
     def is_on(self) -> bool:
@@ -127,12 +135,17 @@ class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "start_time": schedule.start_time,
             "end_time": schedule.end_time,
             "hvac_mode": schedule.hvac_mode,
+            "hvac_mode_home": schedule.hvac_mode_home,
+            "hvac_mode_away": schedule.hvac_mode_away,
             "only_when_home": schedule.only_when_home,
             "in_time_window": schedule.in_time_window,
             "presence_ok": schedule.presence_ok,
             "device_count": schedule.device_count,
             "devices": list(schedule.devices),
+            "schedule_device_trackers": list(schedule.schedule_device_trackers),
             "target_temp": schedule.target_temp,
+            "target_temp_home": schedule.target_temp_home,
+            "target_temp_away": schedule.target_temp_away,
             "target_fan": schedule.target_fan,
         }
 
@@ -154,6 +167,12 @@ class DeviceActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self._attr_name = f"Heating {device_entity.replace('climate.', '').replace('_', ' ').title()}"
         self._attr_icon = "mdi:radiator"
         self._attr_device_class = BinarySensorDeviceClass.RUNNING
+        slug_entry = slugify(entry.entry_id)
+        slug_device = slugify(safe_id)
+        self.entity_id = DEVICE_BINARY_ENTITY_TEMPLATE.format(
+            entry=slug_entry,
+            device=slug_device,
+        )
 
     @property
     def is_on(self) -> bool:
