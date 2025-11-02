@@ -644,3 +644,154 @@ def test_time_window_spanning_midnight():
     assert HeatingControlCoordinator._is_time_in_schedule("02:00", "22:00", "01:00") is False
     assert HeatingControlCoordinator._is_time_in_schedule("12:00", "08:00", "18:00") is True
     assert HeatingControlCoordinator._is_time_in_schedule("06:00", "08:00", "18:00") is False
+
+
+def test_exactly_at_midnight_schedule_wins(monkeypatch, dummy_hass: DummyHass):
+    """Test schedule starting at 00:00 beats one from 23:00 when current time is 00:00."""
+    freeze_time(monkeypatch, 0, 0)
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_DEVICE_TRACKERS: [],
+        CONF_CLIMATE_DEVICES: ["climate.bedroom"],
+        CONF_SCHEDULES: [
+            base_schedule(
+                "Night",
+                "23:00",
+                "07:00",
+                devices=["climate.bedroom"],
+                temperature=18.0,
+            ),
+            base_schedule(
+                "Midnight",
+                "00:00",
+                "06:00",
+                devices=["climate.bedroom"],
+                temperature=20.0,
+            ),
+        ],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    bedroom = result.device_decisions["climate.bedroom"]
+    assert bedroom.should_be_active is True
+    assert bedroom.hvac_mode == "heat"
+    assert bedroom.target_temp == 20.0
+    assert bedroom.active_schedules == ("Midnight",)
+
+
+def test_schedule_one_minute_across_midnight(monkeypatch, dummy_hass: DummyHass):
+    """Test schedule at 23:59 vs 00:00, checked at 00:01."""
+    freeze_time(monkeypatch, 0, 1)
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_DEVICE_TRACKERS: [],
+        CONF_CLIMATE_DEVICES: ["climate.bedroom"],
+        CONF_SCHEDULES: [
+            base_schedule(
+                "Late",
+                "23:59",
+                "06:00",
+                devices=["climate.bedroom"],
+                temperature=18.0,
+            ),
+            base_schedule(
+                "Early",
+                "00:00",
+                "06:00",
+                devices=["climate.bedroom"],
+                temperature=22.0,
+            ),
+        ],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    bedroom = result.device_decisions["climate.bedroom"]
+    assert bedroom.should_be_active is True
+    assert bedroom.hvac_mode == "heat"
+    assert bedroom.target_temp == 22.0
+    assert bedroom.active_schedules == ("Early",)
+
+
+def test_multiple_schedules_crossing_midnight(monkeypatch, dummy_hass: DummyHass):
+    """Test multiple overlapping schedules crossing midnight."""
+    freeze_time(monkeypatch, 1, 0)
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_DEVICE_TRACKERS: [],
+        CONF_CLIMATE_DEVICES: ["climate.bedroom"],
+        CONF_SCHEDULES: [
+            base_schedule(
+                "Early Night",
+                "22:00",
+                "02:00",
+                devices=["climate.bedroom"],
+                temperature=18.0,
+            ),
+            base_schedule(
+                "Late Night",
+                "23:00",
+                "03:00",
+                devices=["climate.bedroom"],
+                temperature=19.0,
+            ),
+            base_schedule(
+                "After Midnight",
+                "00:30",
+                "04:00",
+                devices=["climate.bedroom"],
+                temperature=20.0,
+            ),
+        ],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    bedroom = result.device_decisions["climate.bedroom"]
+    assert bedroom.should_be_active is True
+    assert bedroom.hvac_mode == "heat"
+    assert bedroom.target_temp == 20.0
+    assert bedroom.active_schedules == ("After Midnight",)
+
+
+def test_current_time_equals_schedule_start(monkeypatch, dummy_hass: DummyHass):
+    """Test when current time exactly matches a schedule start time."""
+    freeze_time(monkeypatch, 7, 0)
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_DEVICE_TRACKERS: [],
+        CONF_CLIMATE_DEVICES: ["climate.bedroom"],
+        CONF_SCHEDULES: [
+            base_schedule(
+                "Night",
+                "23:00",
+                "07:00",
+                devices=["climate.bedroom"],
+                temperature=18.0,
+            ),
+            base_schedule(
+                "Morning",
+                "07:00",
+                "09:00",
+                devices=["climate.bedroom"],
+                temperature=22.0,
+            ),
+        ],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    bedroom = result.device_decisions["climate.bedroom"]
+    assert bedroom.should_be_active is True
+    assert bedroom.hvac_mode == "heat"
+    assert bedroom.target_temp == 22.0
+    assert bedroom.active_schedules == ("Morning",)
