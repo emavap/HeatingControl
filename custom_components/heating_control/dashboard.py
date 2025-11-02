@@ -16,6 +16,8 @@ from .const import (
     CONF_CLIMATE_DEVICES,
     CONF_DEVICE_TRACKERS,
     DOMAIN,
+    ENTITY_DECISION_DIAGNOSTICS,
+    ENTITY_EVERYONE_AWAY,
     SCHEDULE_SWITCH_ENTITY_TEMPLATE,
 )
 
@@ -209,12 +211,12 @@ class HeatingControlDashboardStrategy(Strategy):
 
         status_entities = [
             {
-                "entity": "sensor.heating_control_decision_diagnostics",
+                "entity": ENTITY_DECISION_DIAGNOSTICS,
                 "name": "Decision diagnostics",
             },
             {
-                "entity": "binary_sensor.heating_control_both_away",
-                "name": "Residents away",
+                "entity": ENTITY_EVERYONE_AWAY,
+                "name": "Everyone away",
             },
         ]
 
@@ -284,7 +286,7 @@ class HeatingControlDashboardStrategy(Strategy):
                     "action": "call-service",
                     "service": "homeassistant.update_entity",
                     "data": {
-                        "entity_id": "sensor.heating_control_decision_diagnostics",
+                        "entity_id": ENTITY_DECISION_DIAGNOSTICS,
                     },
                 },
             }

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Mapping, Tuple
+from typing import Dict, Mapping, Tuple
 
 
 @dataclass(frozen=True)
@@ -96,7 +96,7 @@ class DiagnosticsSnapshot:
 class HeatingStateSnapshot:
     """Complete state snapshot calculated by the coordinator."""
 
-    both_away: bool
+    everyone_away: bool
     anyone_home: bool
     schedule_decisions: Mapping[str, ScheduleDecision]
     device_decisions: Mapping[str, DeviceDecision]
@@ -105,7 +105,7 @@ class HeatingStateSnapshot:
     def as_dict(self) -> Dict[str, object]:
         """Return the snapshot data as dictionaries (for backwards compatibility)."""
         return {
-            "both_away": self.both_away,
+            "everyone_away": self.everyone_away,
             "anyone_home": self.anyone_home,
             "schedule_decisions": {
                 key: decision.as_dict()

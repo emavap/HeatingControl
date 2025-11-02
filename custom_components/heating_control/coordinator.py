@@ -36,12 +36,7 @@ from .const import (
     UPDATE_INTERVAL,
 )
 from .controller import ClimateController
-from .models import (
-    DeviceDecision,
-    DiagnosticsSnapshot,
-    HeatingStateSnapshot,
-    ScheduleDecision,
-)
+from .models import DeviceDecision, DiagnosticsSnapshot, HeatingStateSnapshot, ScheduleDecision
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -217,7 +212,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         now = datetime.now()
         now_hm = now.strftime("%H:%M")
 
-        tracker_states, anyone_home, both_away = self._resolve_presence(config)
+        tracker_states, anyone_home, everyone_away = self._resolve_presence(config)
         tracker_states = dict(tracker_states)
 
         auto_heating_enabled = config.get(CONF_AUTO_HEATING_ENABLED, True)
@@ -255,7 +250,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         )
 
         return HeatingStateSnapshot(
-            both_away=both_away,
+            everyone_away=everyone_away,
             anyone_home=anyone_home,
             schedule_decisions=schedule_decisions,
             device_decisions=device_decisions,
@@ -277,9 +272,9 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             tracker_states[tracker] = self._is_tracker_home(tracker)
 
         anyone_home = any(tracker_states.values())
-        both_away = not anyone_home
+        everyone_away = not anyone_home
 
-        return tracker_states, anyone_home, both_away
+        return tracker_states, anyone_home, everyone_away
 
     def _is_tracker_home(self, entity_id: Optional[str]) -> bool:
         """Return True if the given tracker entity is in STATE_HOME."""

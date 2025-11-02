@@ -526,7 +526,7 @@ async def test_confirm_delete_shows_confirmation(mock_config_entry):
         - Description includes:
           * Schedule name ("Night")
           * Time window (22:00 - 07:00)
-          * Device count (0 devices)
+          * Device count (0)
           * "Cannot be undone" warning
         - Form has select dropdown (not boolean toggle)
         - Default option is "cancel" (safe choice)

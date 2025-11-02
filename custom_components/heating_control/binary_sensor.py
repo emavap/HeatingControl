@@ -12,7 +12,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
-    BINARY_SENSOR_BOTH_AWAY,
+    BINARY_SENSOR_EVERYONE_AWAY,
 )
 from .coordinator import HeatingControlCoordinator
 
@@ -25,7 +25,7 @@ async def async_setup_entry(
     """Set up the binary sensor platform."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities = [BothAwayBinarySensor(coordinator, entry)]
+    entities = [EveryoneAwayBinarySensor(coordinator, entry)]
 
     # Add per-schedule binary sensors
     if coordinator.data:
@@ -58,8 +58,8 @@ class HeatingControlBinarySensor(CoordinatorEntity, BinarySensorEntity):
             self._attr_icon = icon
 
 
-class BothAwayBinarySensor(HeatingControlBinarySensor):
-    """Binary sensor for both away status."""
+class EveryoneAwayBinarySensor(HeatingControlBinarySensor):
+    """Binary sensor that reports when everyone tracked is away."""
 
     def __init__(
         self, coordinator: HeatingControlCoordinator, entry: ConfigEntry
@@ -68,17 +68,17 @@ class BothAwayBinarySensor(HeatingControlBinarySensor):
         super().__init__(
             coordinator,
             entry,
-            BINARY_SENSOR_BOTH_AWAY,
-            "Both Away",
+            BINARY_SENSOR_EVERYONE_AWAY,
+            "Everyone Away",
             "mdi:home-export-outline",
         )
         self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
 
     @property
     def is_on(self) -> bool:
-        """Return true if both residents are away."""
+        """Return true if everyone is away."""
         snapshot = self.coordinator.data
-        return bool(snapshot and snapshot.both_away)
+        return bool(snapshot and snapshot.everyone_away)
 
 
 class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):

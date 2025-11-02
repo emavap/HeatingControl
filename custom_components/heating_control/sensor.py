@@ -98,7 +98,7 @@ class DecisionDiagnosticsSensor(HeatingControlSensor):
             {
                 "active_devices": active_devices,
                 "total_devices": len(snapshot.device_decisions),
-                "both_away": snapshot.both_away,
+                "everyone_away": snapshot.everyone_away,
                 "anyone_home": snapshot.anyone_home,
             }
         )

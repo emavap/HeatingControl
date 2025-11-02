@@ -21,7 +21,6 @@ from custom_components.heating_control.const import (
     CONF_SCHEDULE_START,
     CONF_SCHEDULE_TEMPERATURE,
     DEFAULT_FINAL_SETTLE,
-    DEFAULT_ONLY_SCHEDULED_ACTIVE,
     DEFAULT_SCHEDULE_FAN_MODE,
     DEFAULT_SCHEDULE_TEMPERATURE,
     DEFAULT_SETTLE_SECONDS,
@@ -106,7 +105,7 @@ def test_schedule_activation_with_presence(monkeypatch, dummy_hass: DummyHass):
     coordinator = make_coordinator(dummy_hass, config)
     result = coordinator._calculate_heating_state()
 
-    assert result.both_away is False
+    assert result.everyone_away is False
     assert result.anyone_home is True
     assert result.schedule_decisions["Morning"].is_active is True
     assert result.device_decisions["climate.living_room"].should_be_active is True
@@ -136,7 +135,7 @@ def test_schedule_activation_without_trackers_defaults_to_home(monkeypatch, dumm
     coordinator = make_coordinator(dummy_hass, config)
     result = coordinator._calculate_heating_state()
 
-    assert result.both_away is False
+    assert result.everyone_away is False
     assert result.anyone_home is True
     assert result.schedule_decisions["Morning"].is_active is True
     assert result.diagnostics.trackers_total == 0
@@ -411,8 +410,6 @@ def test_daily_schedule_flow(monkeypatch, dummy_hass: DummyHass):
     assert lights_out.device_decisions[kitchen].should_be_active is False
     assert lights_out.device_decisions[bedroom1].should_be_active is False
     assert lights_out.device_decisions[bedroom2].should_be_active is False
-
-
 def test_schedule_requires_presence(monkeypatch, dummy_hass: DummyHass):
     freeze_time(monkeypatch, 15, 0)
     dummy_hass.states.set("device_tracker.user1", DummyState("not_home", {}))
@@ -438,7 +435,7 @@ def test_schedule_requires_presence(monkeypatch, dummy_hass: DummyHass):
     coordinator = make_coordinator(dummy_hass, config)
     result = coordinator._calculate_heating_state()
 
-    assert result.both_away is True
+    assert result.everyone_away is True
     assert result.anyone_home is False
     assert result.schedule_decisions["Afternoon"].is_active is False
     assert result.device_decisions["climate.bedroom"].should_be_active is False
@@ -466,7 +463,7 @@ def test_multiple_trackers_presence_counts(monkeypatch, dummy_hass: DummyHass):
     result = coordinator._calculate_heating_state()
 
     assert result.anyone_home is True
-    assert result.both_away is False
+    assert result.everyone_away is False
     diagnostics = result.diagnostics
     assert diagnostics.trackers_home == 2
     assert diagnostics.trackers_total == 3

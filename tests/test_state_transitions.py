@@ -63,7 +63,7 @@ def snapshot(
     )
 
     return HeatingStateSnapshot(
-        both_away=not anyone_home,
+        everyone_away=not anyone_home,
         anyone_home=anyone_home,
         schedule_decisions=schedule_decisions,
         device_decisions={},

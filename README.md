@@ -223,7 +223,7 @@ A: This depends on the "Only Scheduled Devices Active" setting:
 
 ### Global Binary Sensors
 
-- `binary_sensor.heating_control_both_away` - Are both residents away
+- `binary_sensor.heating_control_everyone_away` - Are all tracked residents away
 
 ### Per-Schedule Binary Sensors
 
@@ -324,7 +324,7 @@ The integration **automatically controls** all configured climate devices every 
 ### What Happens Automatically
 
 1. **Schedule Evaluation**: All schedules are evaluated based on current time and presence rules
-2. **Decision Building**: Target HVAC state, temperature, and fan mode are computed for every climate device (highest temperature wins)
+2. **Decision Building**: Target HVAC state, temperature, and fan mode are computed for every managed climate device (highest temperature wins)
 3. **Change Detection**: Decisions are compared against the last command sent to each entity to determine what actually needs to change
 4. **Command Dispatch**: HVAC mode, temperature, and fan commands are sent only where differences are detected, with settle delays when toggling HVAC state
 
@@ -345,7 +345,7 @@ The integration **automatically controls** all configured climate devices every 
 Binary sensors are provided for monitoring and creating custom notifications or additional automations:
 
 ```yaml
-# Example: Notify when a specific schedule becomes active
+# Example: Notify when specific schedule becomes active
 automation:
   - alias: "Heating Night Mode Active"
     trigger:

@@ -55,7 +55,7 @@ actions:
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ both_away }}"
+            value_template: "{{ everyone_away }}"
         sequence:
           - choose:
               - conditions:
@@ -94,7 +94,7 @@ actions:
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ not both_away }}"
+            value_template: "{{ not everyone_away }}"
           - condition: state
             entity_id: input_boolean.aircoheating
             state: "on"
@@ -199,7 +199,7 @@ actions:
   - choose:
       - conditions:
           - condition: template
-            value_template: "{{ not both_away }}"
+            value_template: "{{ not everyone_away }}"
           - condition: state
             entity_id: input_boolean.aircoheating
             state: "off"
@@ -243,7 +243,7 @@ variables:
   within_day: "{{ morning <= now_hm < night }}"
   iphone_home: "{{ is_state('device_tracker.iphone16','home') }}"
   wendy_home: "{{ is_state('device_tracker.wendys_iphone16','home') }}"
-  both_away: |-
+  everyone_away: |-
     {{ is_state('device_tracker.iphone16','not_home') and
        is_state('device_tracker.wendys_iphone16','not_home') }}
   comfort_temp: "{{ states('input_number.heating_comfort_temperature') | float(19) }}"

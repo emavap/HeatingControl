@@ -32,7 +32,7 @@ DEFAULT_FINAL_SETTLE = 2
 DEFAULT_ONLY_SCHEDULED_ACTIVE = False
 
 # Sensor types
-BINARY_SENSOR_BOTH_AWAY = "both_away"
+BINARY_SENSOR_EVERYONE_AWAY = "everyone_away"
 
 SENSOR_DECISION_DIAGNOSTICS = "decision_diagnostics"
 
@@ -50,8 +50,13 @@ ATTR_SCHEDULE_NAME = "schedule_name"
 # Entity naming
 SCHEDULE_SWITCH_ENTITY_TEMPLATE = "switch.heating_schedule_{entry}_{schedule}_enabled"
 
+# Entity IDs
+ENTITY_DECISION_DIAGNOSTICS = "sensor.heating_control_decision_diagnostics"
+ENTITY_EVERYONE_AWAY = "binary_sensor.heating_control_everyone_away"
+
 # Dashboard
 DASHBOARD_TITLE = "Smart Heating"
 DASHBOARD_ICON = "mdi:thermostat"
 DASHBOARD_URL_PATH_TEMPLATE = "heating-control-{entry_id}"
 DASHBOARD_CREATED_KEY = "dashboard_url"
+DASHBOARD_ENTRY_ID_LENGTH = 8  # Length of entry_id prefix for dashboard URL

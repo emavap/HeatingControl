@@ -42,7 +42,7 @@ class ClimateController:
         self,
         device_decisions: Iterable[DeviceDecision],
     ) -> None:
-        """Apply decisions to all managed climate devices."""
+        """Apply decisions to all devices."""
         for decision in device_decisions:
             await self._apply_device(
                 decision.entity_id,
