@@ -24,6 +24,7 @@ from .const import (
     ATTR_SCHEDULE_NAME,
     CONF_SCHEDULE_ENABLED,
     DASHBOARD_CREATED_KEY,
+    DASHBOARD_ENTRY_ID_LENGTH,
     DASHBOARD_ICON,
     DASHBOARD_TITLE,
     DASHBOARD_URL_PATH_TEMPLATE,
@@ -136,7 +137,7 @@ async def _async_setup_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
     dashboard_url = entry.data.get(DASHBOARD_CREATED_KEY)
     url_path = dashboard_url or DASHBOARD_URL_PATH_TEMPLATE.format(
-        entry_id=entry.entry_id[:8]
+        entry_id=entry.entry_id[:DASHBOARD_ENTRY_ID_LENGTH]
     )
 
     if not dashboard_url:
