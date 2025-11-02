@@ -9,6 +9,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -47,11 +48,22 @@ class HeatingControlSensor(CoordinatorEntity, SensorEntity):
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
+        self._entry_id = entry.entry_id
         self._attr_unique_id = f"{entry.entry_id}_{sensor_type}"
         self._attr_name = f"Heating Control {name}"
         self._sensor_type = sensor_type
         if icon:
             self._attr_icon = icon
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="Heating Control",
+            manufacturer="Heating Control",
+            model="Smart Heating Schedule",
+        )
 
 
 class DecisionDiagnosticsSensor(HeatingControlSensor):

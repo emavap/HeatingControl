@@ -7,6 +7,7 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
@@ -54,11 +55,22 @@ class HeatingControlBinarySensor(CoordinatorEntity, BinarySensorEntity):
     ) -> None:
         """Initialize the binary sensor."""
         super().__init__(coordinator)
+        self._entry_id = entry.entry_id
         self._attr_unique_id = f"{entry.entry_id}_{sensor_type}"
         self._attr_name = f"Heating Control {name}"
         self._sensor_type = sensor_type
         if icon:
             self._attr_icon = icon
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="Heating Control",
+            manufacturer="Heating Control",
+            model="Smart Heating Schedule",
+        )
 
 
 class EveryoneAwayBinarySensor(HeatingControlBinarySensor):
@@ -109,6 +121,16 @@ class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
         slug_schedule = slugify(schedule_id or schedule_name)
         self.entity_id = SCHEDULE_BINARY_ENTITY_TEMPLATE.format(
             entry=slug_entry, schedule=slug_schedule
+        )
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="Heating Control",
+            manufacturer="Heating Control",
+            model="Smart Heating Schedule",
         )
 
     @property
@@ -172,6 +194,16 @@ class DeviceActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self.entity_id = DEVICE_BINARY_ENTITY_TEMPLATE.format(
             entry=slug_entry,
             device=slug_device,
+        )
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="Heating Control",
+            manufacturer="Heating Control",
+            model="Smart Heating Schedule",
         )
 
     @property

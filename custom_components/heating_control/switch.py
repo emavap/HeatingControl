@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
@@ -75,6 +76,16 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         )
         self._fallback_name = schedule_name
         self._attr_unique_id = f"{entry.entry_id}_schedule_{schedule_id}_enabled"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="Heating Control",
+            manufacturer="Heating Control",
+            model="Smart Heating Schedule",
+        )
 
     @property
     def name(self) -> str:
