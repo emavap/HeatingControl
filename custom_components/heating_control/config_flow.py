@@ -54,7 +54,8 @@ def _extract_trackers(config: dict[str, Any] | None) -> list[str]:
 class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Heating Control."""
 
-    VERSION = 1
+    VERSION = 2
+    MINOR_VERSION = 1
 
     def __init__(self):
         """Initialize the config flow state containers."""

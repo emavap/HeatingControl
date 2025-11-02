@@ -36,6 +36,10 @@ from .dashboard import SUPPORTS_DASHBOARD_STRATEGY
 
 _LOGGER = logging.getLogger(__name__)
 
+# Config entry version for migrations
+CONFIG_VERSION = 2
+CONFIG_MINOR_VERSION = 1
+
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
 
 SERVICES_REGISTERED_KEY = f"{DOMAIN}_services_registered"
@@ -53,6 +57,28 @@ SET_SCHEDULE_SCHEMA = vol.Schema(
         vol.Required(CONF_SCHEDULE_ENABLED): cv.boolean,
     }
 )
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate old config entries to new format with device support."""
+    _LOGGER.info(
+        "Migrating Heating Control config entry from version %s.%s to %s.%s",
+        entry.version,
+        entry.minor_version,
+        CONFIG_VERSION,
+        CONFIG_MINOR_VERSION,
+    )
+
+    # Version 1 -> 2: Remove old config and force reconfiguration
+    if entry.version == 1 or entry.version < CONFIG_VERSION:
+        _LOGGER.warning(
+            "Heating Control version 1 configuration is incompatible with version 2. "
+            "The integration will be removed and must be reconfigured to enable device support."
+        )
+        # Return False to remove the config entry
+        return False
+
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
