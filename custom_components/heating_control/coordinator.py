@@ -151,13 +151,24 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
     @staticmethod
     def _derive_auto_end_times(schedules: List[dict]) -> Dict[str, str]:
-        """Derive implicit end times using the next enabled schedule start time."""
-        timeline: List[Tuple[int, int, str, str]] = []
+        """Derive implicit end times per-device to allow overlapping schedules for different devices.
+
+        For each device, schedules run sequentially. A schedule controlling multiple devices
+        stays active until the last of its devices has a newer schedule take over.
+        """
+        # Step 1: Build per-device timelines
+        # device_timelines[device_entity] = [(start_minutes, schedule_id, start_hm), ...]
+        device_timelines: Dict[str, List[Tuple[int, str, str]]] = {}
+
+        # schedule_info[schedule_id] = (index, start_hm, start_minutes, devices)
+        schedule_info: Dict[str, Tuple[int, str, int, List[str]]] = {}
 
         for index, schedule in enumerate(schedules):
             if schedule.get(CONF_SCHEDULE_END):
+                # Has explicit end time, skip auto-calculation
                 continue
             if not schedule.get(CONF_SCHEDULE_ENABLED, True):
+                # Disabled schedules don't need end times
                 continue
 
             schedule_id = (
@@ -176,28 +187,69 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 hours, minutes = start_hm.split(":")
                 start_minutes = int(hours) * 60 + int(minutes)
 
-            timeline.append((start_minutes, index, schedule_id, start_hm))
+            devices = schedule.get(CONF_SCHEDULE_DEVICES, [])
+            schedule_info[schedule_id] = (index, start_hm, start_minutes, devices)
 
-        if not timeline:
+            # Add this schedule to each device's timeline
+            for device_entity in devices:
+                device_timelines.setdefault(device_entity, []).append(
+                    (start_minutes, schedule_id, start_hm)
+                )
+
+        if not schedule_info:
             return {}
 
-        timeline.sort()
-        derived: Dict[str, str] = {}
-        total = len(timeline)
+        # Step 2: For each device, calculate when each schedule ends for THAT device
+        # device_schedule_ends[(device, schedule_id)] = end_time_minutes (or None for midnight)
+        device_schedule_ends: Dict[Tuple[str, str], Optional[int]] = {}
 
-        for position, (_, _, schedule_id, start_hm) in enumerate(timeline):
-            if total == 1:
+        for device_entity, timeline in device_timelines.items():
+            timeline.sort()  # Sort by start_minutes
+            total = len(timeline)
+
+            for position, (start_minutes, schedule_id, start_hm) in enumerate(timeline):
+                if total == 1:
+                    # Only one schedule for this device, runs until midnight
+                    device_schedule_ends[(device_entity, schedule_id)] = None
+                    continue
+
+                # Find the next schedule with a different start time
+                end_minutes = None
+                for offset in range(1, total):
+                    next_pos = (position + offset) % total
+                    next_start_minutes, _, next_start_hm = timeline[next_pos]
+                    if next_start_hm != start_hm:
+                        end_minutes = next_start_minutes
+                        break
+
+                device_schedule_ends[(device_entity, schedule_id)] = end_minutes
+
+        # Step 3: For each schedule, find when it should end overall
+        # A schedule ends when the LAST of its devices has a newer schedule take over
+        derived: Dict[str, str] = {}
+
+        for schedule_id, (index, start_hm, start_minutes, devices) in schedule_info.items():
+            if not devices:
+                # Schedule controls no devices, default to midnight
                 derived[schedule_id] = DEFAULT_SCHEDULE_END
                 continue
 
-            derived_end = DEFAULT_SCHEDULE_END
-            for offset in range(1, total):
-                candidate = timeline[(position + offset) % total][3]
-                if candidate != start_hm:
-                    derived_end = candidate
-                    break
+            # Collect all end times for this schedule's devices
+            end_times_minutes: List[int] = []
+            for device_entity in devices:
+                end_minutes = device_schedule_ends.get((device_entity, schedule_id))
+                if end_minutes is not None:
+                    end_times_minutes.append(end_minutes)
 
-            derived[schedule_id] = derived_end
+            if not end_times_minutes:
+                # No overlapping schedules for any device, runs until midnight
+                derived[schedule_id] = DEFAULT_SCHEDULE_END
+            else:
+                # Use the LATEST end time so the schedule stays active for all devices
+                latest_end_minutes = max(end_times_minutes)
+                hours = latest_end_minutes // 60
+                mins = latest_end_minutes % 60
+                derived[schedule_id] = f"{hours:02d}:{mins:02d}"
 
         return derived
 
