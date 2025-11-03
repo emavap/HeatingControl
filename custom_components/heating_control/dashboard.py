@@ -305,14 +305,7 @@ class HeatingControlDashboardStrategy(Strategy):
                 cards.extend(
                     self._wrap_with_heading(
                         "Schedules",
-                        [
-                            {
-                                "type": "grid",
-                                "columns": 2,
-                                "square": False,
-                                "cards": schedule_cards,
-                            }
-                        ],
+                        schedule_cards,
                     )
                 )
 
@@ -368,104 +361,120 @@ class HeatingControlDashboardStrategy(Strategy):
         if not snapshot or not snapshot.device_decisions:
             return []
 
-        device_cards: List[Dict[str, Any]] = []
+        device_entity_cards: List[Dict[str, Any]] = []
 
         for device_entity in climate_entities:
             device_decision = snapshot.device_decisions.get(device_entity)
             device_name = self._friendly_name(device_entity)
 
+            # Build entity list for this device
+            entities: List[Dict[str, Any]] = []
+
+            # Add the climate entity itself as a control
+            entities.append(
+                {
+                    "entity": device_entity,
+                    "name": device_name,
+                }
+            )
+
             if not device_decision:
-                # Device has no decision (shouldn't happen but handle gracefully)
-                device_cards.append(
+                # Device has no decision
+                entities.append(
                     {
-                        "type": "button",
+                        "type": "attribute",
                         "entity": device_entity,
-                        "name": device_name,
-                        "icon": "mdi:air-conditioner",
-                        "icon_color": "grey",
-                        "show_state": False,
-                        "layout": "vertical",
-                        "label": "No schedule",
-                        "tap_action": {"action": "more-info"},
+                        "attribute": "temperature",
+                        "name": "Status",
+                        "suffix": " - No schedule",
                     }
                 )
-                continue
-
-            # Get the active schedule name
-            if device_decision.active_schedules:
+            elif device_decision.active_schedules:
+                # Device has an active schedule
                 schedule_name = device_decision.active_schedules[0]
-                is_active = device_decision.should_be_active
                 hvac_mode = device_decision.hvac_mode or "off"
                 target_temp = device_decision.target_temp
                 target_fan = device_decision.target_fan
+                is_active = device_decision.should_be_active
 
-                # Build status content
-                status_parts = [f"Mode: {hvac_mode.title()}"]
-                if target_temp is not None:
-                    status_parts.append(f"{target_temp:g}°")
-                if target_fan:
-                    status_parts.append(f"Fan: {target_fan}")
-
-                status_text = " • ".join(status_parts)
-                label_lines = [f"Schedule: {schedule_name}"]
-
-                # Color based on activity
-                if is_active:
-                    if hvac_mode in ["heat", "auto"]:
-                        icon_color = "red"
-                        icon = "mdi:fire"
-                    elif hvac_mode in ["cool", "heat_cool"]:
-                        icon_color = "blue"
-                        icon = "mdi:snowflake"
-                    else:
-                        icon_color = "green"
-                        icon = "mdi:fan"
-                    label_lines.append(status_text)
-                else:
-                    icon_color = "grey"
-                    icon = "mdi:power-off"
-                    label_lines.append("Off")
-
-                device_cards.append(
+                # Active schedule
+                entities.append(
                     {
-                        "type": "button",
-                        "entity": device_entity,
-                        "name": device_name,
-                        "icon": icon,
-                        "icon_color": icon_color,
-                        "show_state": False,
-                        "layout": "vertical",
-                        "label": "\n".join(label_lines),
-                        "tap_action": {"action": "more-info"},
+                        "type": "text",
+                        "name": "Active Schedule",
+                        "text": schedule_name,
                     }
                 )
+
+                # Status
+                status_value = "Active" if is_active else "Inactive"
+                entities.append(
+                    {
+                        "type": "text",
+                        "name": "Status",
+                        "text": status_value,
+                    }
+                )
+
+                # HVAC Mode
+                entities.append(
+                    {
+                        "type": "text",
+                        "name": "Mode",
+                        "text": hvac_mode.title(),
+                    }
+                )
+
+                # Target Temperature
+                if target_temp is not None:
+                    entities.append(
+                        {
+                            "type": "text",
+                            "name": "Target Temperature",
+                            "text": f"{target_temp:g}°C",
+                        }
+                    )
+
+                # Current Temperature (from climate entity attribute)
+                entities.append(
+                    {
+                        "type": "attribute",
+                        "entity": device_entity,
+                        "attribute": "current_temperature",
+                        "name": "Current Temperature",
+                        "suffix": "°C",
+                    }
+                )
+
+                # Fan Mode
+                if target_fan:
+                    entities.append(
+                        {
+                            "type": "text",
+                            "name": "Fan Mode",
+                            "text": target_fan,
+                        }
+                    )
             else:
                 # No active schedule
-                device_cards.append(
+                entities.append(
                     {
-                        "type": "button",
-                        "entity": device_entity,
-                        "name": device_name,
-                        "icon": "mdi:air-conditioner",
-                        "icon_color": "grey",
-                        "show_state": False,
-                        "layout": "vertical",
-                        "label": "No active schedule",
-                        "tap_action": {"action": "more-info"},
+                        "type": "text",
+                        "name": "Status",
+                        "text": "No active schedule",
                     }
                 )
 
-        if device_cards:
-            return [
+            # Create an entities card for this device
+            device_entity_cards.append(
                 {
-                    "type": "grid",
-                    "columns": 2,
-                    "square": False,
-                    "cards": device_cards,
+                    "type": "entities",
+                    "title": device_name,
+                    "entities": entities,
                 }
-            ]
+            )
 
-        return []
+        return device_entity_cards
 
     def _build_schedule_cards(
         self, entry_id: str, snapshot
@@ -481,7 +490,9 @@ class HeatingControlDashboardStrategy(Strategy):
                 if device_decision.active_schedules:
                     # active_schedules is a tuple, usually with one schedule name
                     for schedule_name in device_decision.active_schedules:
-                        schedule_to_controlling_devices.setdefault(schedule_name, []).append(device_entity)
+                        schedule_to_controlling_devices.setdefault(
+                            schedule_name, []
+                        ).append(device_entity)
 
         cards: List[Dict[str, Any]] = []
 
@@ -495,69 +506,172 @@ class HeatingControlDashboardStrategy(Strategy):
                 time_caption = f"{decision.start_time} → {decision.end_time}"
 
             # Determine how many devices are actually controlled by this schedule
-            controlling_devices = schedule_to_controlling_devices.get(decision.name, [])
+            controlling_devices = schedule_to_controlling_devices.get(
+                decision.name, []
+            )
             controlling_count = len(controlling_devices)
 
-            detail_label = self._format_schedule_label(decision, controlling_devices)
-            label = time_caption
-            if detail_label:
-                label = f"{time_caption} • {detail_label}"
+            card_entities: List[Dict[str, Any]] = [
+                {
+                    "entity": switch_entity,
+                    "name": "Enabled",
+                },
+                {
+                    "type": "text",
+                    "name": "Time Window",
+                    "text": time_caption,
+                },
+            ]
 
-            # Badge logic: Active means in time window, but also show if controlling devices
-            if decision.is_active and controlling_count > 0:
-                # Active and controlling devices
-                icon = "mdi:calendar-star"
-                icon_color = "green"
-                badge = f"Active ({controlling_count})"
-                badge_icon = "mdi:fire"
-                badge_color = "green"
-            elif decision.is_active and controlling_count == 0:
-                # Active but not controlling any devices (superseded by later schedules)
-                icon = "mdi:calendar-alert"
-                icon_color = "orange"
-                badge = "Superseded"
-                badge_icon = "mdi:alert-circle-outline"
-                badge_color = "orange"
-            elif not decision.enabled:
-                icon = "mdi:calendar-remove"
-                icon_color = "grey"
-                badge = "Disabled"
-                badge_icon = "mdi:cancel"
-                badge_color = "grey"
+            window_state = "Open" if decision.in_time_window else "Closed"
+            card_entities.append(
+                {
+                    "type": "text",
+                    "name": "Window",
+                    "text": window_state,
+                }
+            )
+
+            if not decision.enabled:
+                status_text = "Disabled"
+            elif decision.is_active and controlling_count > 0:
+                status_text = "Active"
+            elif decision.is_active:
+                status_text = "Active window • superseded"
+            elif decision.in_time_window:
+                status_text = "Window open"
             else:
-                icon = "mdi:calendar-clock"
-                icon_color = "var(--primary-color)"
-                badge = "Idle"
-                badge_icon = "mdi:clock-outline"
-                badge_color = "var(--primary-color)"
+                status_text = "Idle"
+
+            if (
+                decision.only_when_home
+                and not decision.presence_ok
+                and decision.enabled
+            ):
+                status_text += " • waiting for presence"
+
+            card_entities.append(
+                {
+                    "type": "text",
+                    "name": "Status",
+                    "text": status_text,
+                }
+            )
+
+            presence_parts: List[str] = []
+            if decision.only_when_home:
+                presence_part = "Home required"
+                if decision.presence_ok:
+                    presence_part += " ✓"
+                elif decision.enabled:
+                    presence_part += " ✖"
+                presence_parts.append(presence_part)
+
+            if decision.schedule_device_trackers:
+                tracker_names = [
+                    self._friendly_name(tracker)
+                    for tracker in decision.schedule_device_trackers
+                ]
+                if len(tracker_names) <= 2:
+                    trackers_text = ", ".join(tracker_names)
+                else:
+                    trackers_text = f"{len(tracker_names)} trackers"
+                presence_parts.append(f"Trackers: {trackers_text}")
+
+            if presence_parts:
+                card_entities.append(
+                    {
+                        "type": "text",
+                        "name": "Presence",
+                        "text": " • ".join(presence_parts),
+                    }
+                )
+
+            if decision.hvac_mode_home:
+                home_text = decision.hvac_mode_home.title()
+                if decision.target_temp_home is not None:
+                    home_text += f" {decision.target_temp_home:g}°C"
+                card_entities.append(
+                    {
+                        "type": "text",
+                        "name": "Mode (Home)",
+                        "text": home_text,
+                    }
+                )
+
+            if decision.hvac_mode_away:
+                away_text = decision.hvac_mode_away.title()
+                if decision.target_temp_away is not None:
+                    away_text += f" {decision.target_temp_away:g}°C"
+                card_entities.append(
+                    {
+                        "type": "text",
+                        "name": "Mode (Away)",
+                        "text": away_text,
+                    }
+                )
+
+            if decision.target_fan:
+                card_entities.append(
+                    {
+                        "type": "text",
+                        "name": "Fan Mode",
+                        "text": decision.target_fan,
+                    }
+                )
+
+            if controlling_count > 0:
+                controlling_names = [
+                    self._friendly_name(device) for device in controlling_devices
+                ]
+                if controlling_count <= 2:
+                    controlling_text = ", ".join(controlling_names)
+                else:
+                    controlling_text = f"{controlling_count} devices"
+            else:
+                controlling_text = "None"
+
+            card_entities.append(
+                {
+                    "type": "text",
+                    "name": "Controlling",
+                    "text": controlling_text,
+                }
+            )
+
+            configured_devices = getattr(decision, "devices", []) or []
+            if configured_devices:
+                configured_names = [
+                    self._friendly_name(device) for device in configured_devices
+                ]
+                if len(configured_names) <= 2:
+                    configured_text = ", ".join(configured_names)
+                else:
+                    configured_text = f"{len(configured_names)} devices"
+                card_entities.append(
+                    {
+                        "type": "text",
+                        "name": "Configured",
+                        "text": configured_text,
+                    }
+                )
+
+            detail_label = self._format_schedule_label(decision, controlling_devices)
+            if detail_label:
+                card_entities.append(
+                    {
+                        "type": "text",
+                        "name": "Details",
+                        "text": detail_label,
+                    }
+                )
 
             cards.append(
                 {
-                    "type": "button",
-                    "entity": switch_entity,
-                    "name": display_name,
-                    "icon": icon,
-                    "icon_color": icon_color,
-                    "badge": badge,
-                    "badge_icon": badge_icon,
-                    "badge_color": badge_color,
-                    "show_state": False,
-                    "label": label,
-                    "tap_action": {
-                        "action": "call-service",
-                        "service": "heating_control.set_schedule_enabled",
-                        "data": {
-                            "entry_id": entry_id,
-                            "schedule_id": decision.schedule_id,
-                            "schedule_enabled": not decision.enabled,
-                        },
-                    },
-                    "hold_action": {
-                        "action": "more-info",
-                        "entity": self._schedule_binary_entity(
-                            entry_id, decision.schedule_id
-                        ),
-                    },
+                    "type": "entities",
+                    "title": display_name,
+                    "entities": card_entities,
+                    "column_span": 2,
                 }
             )
 
