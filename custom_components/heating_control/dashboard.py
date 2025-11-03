@@ -94,6 +94,8 @@ class HeatingControlDashboardStrategy(Strategy):
         sections.append(
             {
                 "type": "grid",
+                "columns": 1,
+                "square": False,
                 "cards": self._wrap_with_heading(
                     "Aircos & Thermostats",
                     device_cards
@@ -101,7 +103,6 @@ class HeatingControlDashboardStrategy(Strategy):
                         {
                             "type": "markdown",
                             "content": "No climate devices are configured for Heating Control.",
-                            "column_span": 2,
                         }
                     ],
                 ),
@@ -111,6 +112,8 @@ class HeatingControlDashboardStrategy(Strategy):
         sections.append(
             {
                 "type": "grid",
+                "columns": 1,
+                "square": False,
                 "cards": self._wrap_with_heading(
                     "Smart Heating — Diagnostics",
                     status_cards
@@ -134,7 +137,7 @@ class HeatingControlDashboardStrategy(Strategy):
                     "title": "Smart Heating",
                     "path": "smart-heating",
                     "type": "sections",
-                    "max_columns": 2,
+                    "max_columns": 1,
                     "sections": sections,
                 }
             ],
@@ -165,7 +168,6 @@ class HeatingControlDashboardStrategy(Strategy):
             {
                 "type": "heading",
                 "heading": heading,
-                "column_span": 2,
             },
             *cards,
         ]
@@ -194,9 +196,9 @@ class HeatingControlDashboardStrategy(Strategy):
             return [
                 {
                     "type": "grid",
+                    "columns": 1,
                     "square": False,
                     "cards": cards,
-                    "column_span": 2,
                 }
             ]
         return []
@@ -214,69 +216,34 @@ class HeatingControlDashboardStrategy(Strategy):
         # Add overview cards if snapshot is available
         if snapshot and snapshot.diagnostics:
             diagnostics = snapshot.diagnostics
-            overview_cards = []
-
-            # Active schedules card
-            schedules_label = (
+            schedule_summary = (
                 f"{diagnostics.active_schedules}/{diagnostics.schedule_count} active"
             )
-            overview_cards.append(
-                {
-                    "type": "button",
-                    "entity": ENTITY_DECISION_DIAGNOSTICS,
-                    "name": "Active Schedules",
-                    "icon": "mdi:calendar-clock",
-                    "icon_color": (
-                        "green" if diagnostics.active_schedules > 0 else "grey"
-                    ),
-                    "show_state": False,
-                    "layout": "vertical",
-                    "label": schedules_label,
-                }
-            )
+            climate_total = len(climate_entities)
+            if climate_total > 0:
+                device_summary = (
+                    f"{diagnostics.active_devices}/{climate_total} running"
+                )
+            else:
+                device_summary = f"{diagnostics.active_devices} running"
 
-            # Active devices card
-            devices_label = (
-                f"{diagnostics.active_devices}/{len(climate_entities)} running"
-            )
-            overview_cards.append(
-                {
-                    "type": "button",
-                    "entity": ENTITY_DECISION_DIAGNOSTICS,
-                    "name": "Active Devices",
-                    "icon": "mdi:radiator",
-                    "icon_color": (
-                        "orange" if diagnostics.active_devices > 0 else "grey"
-                    ),
-                    "show_state": False,
-                    "layout": "vertical",
-                    "label": devices_label,
-                }
-            )
+            if diagnostics.trackers_total > 0:
+                presence_summary = (
+                    f"{diagnostics.trackers_home}/{diagnostics.trackers_total} home"
+                )
+            else:
+                presence_summary = "No presence trackers configured"
 
-            # Presence status card
-            presence_icon = "mdi:home-account" if snapshot.anyone_home else "mdi:home-export-outline"
-            presence_color = "blue" if snapshot.anyone_home else "grey"
-            presence_text = f"{diagnostics.trackers_home} / {diagnostics.trackers_total} home"
-            overview_cards.append(
-                {
-                    "type": "button",
-                    "entity": ENTITY_EVERYONE_AWAY,
-                    "name": "Presence",
-                    "icon": presence_icon,
-                    "icon_color": presence_color,
-                    "show_state": False,
-                    "layout": "vertical",
-                    "label": presence_text,
-                }
-            )
+            overview_lines = [
+                f"**Schedules:** {schedule_summary}",
+                f"**Devices:** {device_summary}",
+                f"**Presence:** {presence_summary}",
+            ]
 
             cards.append(
                 {
-                    "type": "grid",
-                    "columns": 3,
-                    "square": False,
-                    "cards": overview_cards,
+                    "type": "markdown",
+                    "content": "\n".join(f"- {line}" for line in overview_lines),
                 }
             )
 
@@ -671,7 +638,6 @@ class HeatingControlDashboardStrategy(Strategy):
                     "type": "entities",
                     "title": display_name,
                     "entities": card_entities,
-                    "column_span": 2,
                 }
             )
 
