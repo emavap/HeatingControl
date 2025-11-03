@@ -12,6 +12,15 @@ A custom Home Assistant integration that **automatically controls** climate devi
 - **Binary Sensors**: Monitor heating decisions and current state
 - **Decision Diagnostics**: Full visibility into heating logic
 
+## Dashboard Overview
+
+The dynamic Lovelace strategy renders a **single-column dashboard** optimised for tablets and desktop touch panels:
+
+- Section headings provide structure without forcing multi-column layouts.
+- Climate devices are shown as standard thermostat cards inside an adaptive grid.
+- Diagnostics are summarised in a markdown card with bullet points, avoiding the oversized icon tiles from earlier versions.
+- Schedule/device mappings, presence trackers, and a manual refresh button stay available for deeper troubleshooting while keeping the layout readable.
+
 ## Directory Structure
 
 ```
@@ -340,21 +349,29 @@ Binary sensors are provided for monitoring schedule states and device activity. 
 
 ## Development
 
-### Running Tests
-
-**Docker (recommended)**
+### Run the Test Suite with Docker
 
 ```bash
 docker build -t heating-control-tests .
-docker run --rm heating-control-tests
+docker run --rm -v "$(pwd)":/app heating-control-tests
 ```
 
-**Local environment**
+Mounting the project directory keeps the container aligned with your working tree, so subsequent runs only require the `docker run` command after the initial build.
+
+### Run pytest Locally
 
 ```bash
 pip install -r requirements-test.txt
-pytest -q
+pytest
 ```
+
+### Test Coverage Highlights
+
+- **Decision engine**: Coordinator state transitions, heating calculations, and control decisions.
+- **Config flow**: 19 schedule management tests covering helper paths, editing, deleting, and error recovery.
+- **Dashboard strategy**: Validation of the single-column layout, diagnostics markdown summary, and fallback messaging when the integration is unavailable.
+
+See `tests/TEST_DOCUMENTATION.md` for detailed notes on each suite.
 
 ### Smart Heating Dashboard
 

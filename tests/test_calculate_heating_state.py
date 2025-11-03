@@ -507,10 +507,12 @@ def test_daily_schedule_flow(monkeypatch, dummy_hass: DummyHass):
     midday_bedroom2 = midday.device_decisions[bedroom2]
     assert midday_kitchen.active_schedules == ("Daytime Kitchen",)
     assert midday_kitchen.target_temp == 20.0
-    assert midday_bedroom1.should_be_active is False
-    assert midday_bedroom1.hvac_mode is None
-    assert midday_bedroom2.should_be_active is False
-    assert midday_bedroom2.hvac_mode is None
+    assert midday_bedroom1.should_be_active is True
+    assert midday_bedroom1.hvac_mode == "heat"
+    assert midday_bedroom1.target_temp == 20.0
+    assert midday_bedroom2.should_be_active is True
+    assert midday_bedroom2.hvac_mode == "heat"
+    assert midday_bedroom2.target_temp == 20.0
 
     freeze_time(monkeypatch, 19, 30)
     evening = coordinator._calculate_heating_state()
@@ -521,8 +523,9 @@ def test_daily_schedule_flow(monkeypatch, dummy_hass: DummyHass):
     assert evening_kitchen.target_temp == 20.0
     assert evening_bedroom2.active_schedules == ("Evening Bedroom2",)
     assert evening_bedroom2.target_temp == 22.0
-    assert evening_bedroom1.should_be_active is False
-    assert evening_bedroom1.hvac_mode is None
+    assert evening_bedroom1.should_be_active is True
+    assert evening_bedroom1.hvac_mode == "heat"
+    assert evening_bedroom1.target_temp == 20.0
 
     freeze_time(monkeypatch, 21, 30)
     night = coordinator._calculate_heating_state()
@@ -538,15 +541,17 @@ def test_daily_schedule_flow(monkeypatch, dummy_hass: DummyHass):
 
     freeze_time(monkeypatch, 23, 30)
     lights_out = coordinator._calculate_heating_state()
-    # At 23:00, "Lights Out" schedule starts with no devices
-    # This ends the time windows for all previous schedules
-    # Since "Lights Out" has no devices, all devices have no active schedule
-    assert lights_out.device_decisions[kitchen].should_be_active is False
-    assert lights_out.device_decisions[kitchen].active_schedules == ()
-    assert lights_out.device_decisions[bedroom1].should_be_active is False
-    assert lights_out.device_decisions[bedroom1].active_schedules == ()
-    assert lights_out.device_decisions[bedroom2].should_be_active is False
-    assert lights_out.device_decisions[bedroom2].active_schedules == ()
+    # At 23:00, "Lights Out" schedule starts with no devices. Existing schedules keep control
+    # of their devices until another schedule that targets them begins.
+    assert lights_out.device_decisions[kitchen].should_be_active is True
+    assert lights_out.device_decisions[kitchen].active_schedules == ("Night Kitchen",)
+    assert lights_out.device_decisions[kitchen].target_temp == 20.0
+    assert lights_out.device_decisions[bedroom1].should_be_active is True
+    assert lights_out.device_decisions[bedroom1].active_schedules == ("Night Bedroom1",)
+    assert lights_out.device_decisions[bedroom1].target_temp == 20.0
+    assert lights_out.device_decisions[bedroom2].should_be_active is True
+    assert lights_out.device_decisions[bedroom2].active_schedules == ("Night Bedroom2",)
+    assert lights_out.device_decisions[bedroom2].target_temp == 22.0
 def test_schedule_requires_presence(monkeypatch, dummy_hass: DummyHass):
     freeze_time(monkeypatch, 15, 0)
     dummy_hass.states.set("device_tracker.user1", DummyState("not_home", {}))

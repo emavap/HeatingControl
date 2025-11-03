@@ -193,10 +193,11 @@ class HeatingControlDashboardStrategy(Strategy):
             )
 
         if cards:
+            column_count = min(max(len(cards), 1), 3)
             return [
                 {
                     "type": "grid",
-                    "columns": 1,
+                    "columns": column_count,
                     "square": False,
                     "cards": cards,
                 }
@@ -212,40 +213,6 @@ class HeatingControlDashboardStrategy(Strategy):
     ) -> List[Dict[str, Any]]:
         """Create entities/tile cards summarising integration status."""
         cards: List[Dict[str, Any]] = []
-
-        # Add overview cards if snapshot is available
-        if snapshot and snapshot.diagnostics:
-            diagnostics = snapshot.diagnostics
-            schedule_summary = (
-                f"{diagnostics.active_schedules}/{diagnostics.schedule_count} active"
-            )
-            climate_total = len(climate_entities)
-            if climate_total > 0:
-                device_summary = (
-                    f"{diagnostics.active_devices}/{climate_total} running"
-                )
-            else:
-                device_summary = f"{diagnostics.active_devices} running"
-
-            if diagnostics.trackers_total > 0:
-                presence_summary = (
-                    f"{diagnostics.trackers_home}/{diagnostics.trackers_total} home"
-                )
-            else:
-                presence_summary = "No presence trackers configured"
-
-            overview_lines = [
-                f"**Schedules:** {schedule_summary}",
-                f"**Devices:** {device_summary}",
-                f"**Presence:** {presence_summary}",
-            ]
-
-            cards.append(
-                {
-                    "type": "markdown",
-                    "content": "\n".join(f"- {line}" for line in overview_lines),
-                }
-            )
 
         status_entities = [
             {

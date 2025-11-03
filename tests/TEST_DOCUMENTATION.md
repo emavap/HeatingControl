@@ -13,6 +13,29 @@ This document explains the comprehensive test suite for the schedule edit/delete
 
 ---
 
+## Dashboard Strategy Layout Tests
+
+These tests focus on the dynamic Lovelace dashboard strategy and ensure the generated layout is accessible and informative.
+
+### Test File
+
+- **Location**: `tests/test_dashboard_strategy.py`
+- **Total Tests**: 3 focused layout tests
+- **Coverage**: Column layout, diagnostic summaries, missing integration fallback
+
+### Key Scenarios
+
+1. **Single Column Rendering**  
+   Verifies the strategy constrains the UI to one column, disables square cards, and renders diagnostics as a markdown summary instead of oversized icons.
+
+2. **Presence Summary Accuracy**  
+   Confirms tracker counts are reflected in the diagnostics summary when presence information is available.
+
+3. **Missing Integration Messaging**  
+   Ensures users see a helpful markdown message when the integration isn't loaded instead of a broken dashboard.
+
+---
+
 ## Testing Philosophy
 
 ### Core Principles
