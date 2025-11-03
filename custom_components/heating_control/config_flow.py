@@ -219,6 +219,7 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         hvac_options = [
             {"label": "Heat", "value": "heat"},
             {"label": "Cool", "value": "cool"},
+            {"label": "Heat/Cool", "value": "heat_cool"},
             {"label": "Off", "value": "off"},
             {"label": "Auto", "value": "auto"},
             {"label": "Dry", "value": "dry"},
@@ -453,32 +454,86 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Add a schedule."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
             schedule_config = {
                 CONF_SCHEDULE_ID: str(uuid.uuid4()),
                 CONF_SCHEDULE_NAME: user_input[CONF_SCHEDULE_NAME],
                 CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
                 CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
+                CONF_SCHEDULE_HVAC_MODE: user_input.get(
+                    CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE
+                ),
                 CONF_SCHEDULE_ONLY_WHEN_HOME: user_input.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True),
+                CONF_SCHEDULE_DEVICE_TRACKERS: list(user_input.get(CONF_SCHEDULE_DEVICE_TRACKERS, [])),
                 CONF_SCHEDULE_DEVICES: user_input.get(CONF_SCHEDULE_DEVICES, []),
                 CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
                 CONF_SCHEDULE_FAN_MODE: user_input.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE),
             }
-            self._pending_schedules.append(schedule_config)
-            return await self.async_step_manage_schedules()
+
+            away_mode = user_input.get(CONF_SCHEDULE_AWAY_HVAC_MODE, "inherit")
+            away_temp = user_input.get(CONF_SCHEDULE_AWAY_TEMPERATURE)
+
+            # Validate away settings
+            if away_temp is not None and (not away_mode or away_mode == "inherit"):
+                errors["away_temperature"] = "away_temp_without_mode"
+
+            if not errors:
+                if away_mode and away_mode != "inherit":
+                    schedule_config[CONF_SCHEDULE_AWAY_HVAC_MODE] = away_mode
+                    if away_temp is not None:
+                        schedule_config[CONF_SCHEDULE_AWAY_TEMPERATURE] = away_temp
+                self._pending_schedules.append(schedule_config)
+                return await self.async_step_manage_schedules()
 
         device_options = [{"label": device, "value": device} for device in self._selected_climate_entities]
+
+        hvac_options = [
+            {"label": "Heat", "value": "heat"},
+            {"label": "Cool", "value": "cool"},
+            {"label": "Heat/Cool", "value": "heat_cool"},
+            {"label": "Off", "value": "off"},
+            {"label": "Auto", "value": "auto"},
+            {"label": "Dry", "value": "dry"},
+            {"label": "Fan Only", "value": "fan_only"},
+        ]
+
+        away_hvac_options = [{"label": "Use home HVAC mode", "value": "inherit"}] + hvac_options
 
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_SCHEDULE_NAME): selector.TextSelector(),
                 vol.Required(CONF_SCHEDULE_ENABLED, default=True): selector.BooleanSelector(),
+                vol.Required(
+                    CONF_SCHEDULE_HVAC_MODE,
+                    default=DEFAULT_SCHEDULE_HVAC_MODE,
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=hvac_options,
+                        multiple=False,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
                 vol.Required(CONF_SCHEDULE_TEMPERATURE, default=DEFAULT_SCHEDULE_TEMPERATURE): selector.NumberSelector(
                     selector.NumberSelectorConfig(min=10, max=30, step=0.5, unit_of_measurement="°C")
                 ),
                 vol.Required(CONF_SCHEDULE_FAN_MODE, default=DEFAULT_SCHEDULE_FAN_MODE): selector.TextSelector(),
                 vol.Optional(CONF_SCHEDULE_START, default=DEFAULT_SCHEDULE_START): selector.TimeSelector(),
                 vol.Required(CONF_SCHEDULE_ONLY_WHEN_HOME, default=True): selector.BooleanSelector(),
+                vol.Optional(CONF_SCHEDULE_DEVICE_TRACKERS, default=[]): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="device_tracker", multiple=True)
+                ),
+                vol.Optional(CONF_SCHEDULE_AWAY_HVAC_MODE, default="inherit"): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=away_hvac_options,
+                        multiple=False,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Optional(CONF_SCHEDULE_AWAY_TEMPERATURE): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=10, max=30, step=0.5, unit_of_measurement="°C")
+                ),
                 vol.Optional(CONF_SCHEDULE_DEVICES, default=[]): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=device_options,
@@ -489,7 +544,18 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
             }
         )
 
-        return self.async_show_form(step_id="add_schedule", data_schema=data_schema)
+        return self.async_show_form(
+            step_id="add_schedule",
+            data_schema=data_schema,
+            errors=errors,
+            description_placeholders={
+                "info": (
+                    "Configure a schedule with a start time; it stays active until the next schedule starts. "
+                    "Select HVAC modes and temperatures for when people are home, and optionally different settings "
+                    "for when everyone is away."
+                )
+            }
+        )
 
     async def async_step_select_schedule_to_edit(
         self, user_input: dict[str, Any] | None = None
@@ -592,6 +658,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         hvac_options = [
             {"label": "Heat", "value": "heat"},
             {"label": "Cool", "value": "cool"},
+            {"label": "Heat/Cool", "value": "heat_cool"},
             {"label": "Off", "value": "off"},
             {"label": "Auto", "value": "auto"},
             {"label": "Dry", "value": "dry"},
