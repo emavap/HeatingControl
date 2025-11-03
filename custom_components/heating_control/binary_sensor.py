@@ -17,6 +17,7 @@ from .const import (
     BINARY_SENSOR_EVERYONE_AWAY,
     SCHEDULE_BINARY_ENTITY_TEMPLATE,
     DEVICE_BINARY_ENTITY_TEMPLATE,
+    CONF_CLIMATE_DEVICES,
 )
 from .coordinator import HeatingControlCoordinator
 
@@ -36,8 +37,12 @@ async def async_setup_entry(
         for schedule_id in coordinator.data.schedule_decisions:
             entities.append(ScheduleActiveBinarySensor(coordinator, entry, schedule_id))
 
-        for entity_id in coordinator.data.device_decisions:
-            entities.append(DeviceActiveBinarySensor(coordinator, entry, entity_id))
+    # Add device binary sensors for all configured climate devices
+    # (not just those in device_decisions, so dashboard always shows them)
+    config = entry.options or entry.data
+    climate_devices = config.get(CONF_CLIMATE_DEVICES, [])
+    for device_entity in climate_devices:
+        entities.append(DeviceActiveBinarySensor(coordinator, entry, device_entity))
 
     async_add_entities(entities)
 
