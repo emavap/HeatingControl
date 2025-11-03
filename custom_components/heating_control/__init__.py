@@ -128,9 +128,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     _teardown_frontend(hass)
                 hass.data.pop(DOMAIN, None)
 
-        # Remove auto-created dashboard (optional - keeps dashboard for user)
-        # Uncomment the following line if you want to remove dashboard on uninstall
-        # await _async_remove_dashboard(hass, entry)
+        # Remove auto-created dashboard on integration removal
+        await _async_remove_dashboard(hass, entry)
 
     return unload_ok
 
@@ -139,6 +138,9 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle config entry options update by reloading the entry."""
     _LOGGER.info("Configuration updated, reloading Heating Control entry")
     await hass.config_entries.async_reload(entry.entry_id)
+
+    # Trigger dashboard refresh to show updated configuration
+    await _async_refresh_dashboard(hass, entry)
 
 
 async def _async_setup_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -512,6 +514,35 @@ def _remove_dashboard_sync(hass: HomeAssistant, url_path: str) -> None:
     if dashboard_file.exists():
         dashboard_file.unlink()
         _LOGGER.debug("Removed dashboard file: %s", dashboard_file)
+
+
+async def _async_refresh_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Trigger dashboard refresh after configuration changes."""
+    dashboard_url = entry.data.get(DASHBOARD_CREATED_KEY)
+
+    if not dashboard_url:
+        _LOGGER.debug("No dashboard URL found for entry %s, skipping refresh", entry.entry_id)
+        return
+
+    try:
+        # Fire event to notify frontend that dashboard should be refreshed
+        hass.bus.async_fire(
+            "lovelace_updated",
+            {"url_path": dashboard_url},
+        )
+        _LOGGER.debug("Fired lovelace_updated event for dashboard %s", dashboard_url)
+
+        # Also fire a custom event for any listeners
+        hass.bus.async_fire(
+            f"{DOMAIN}_dashboard_updated",
+            {
+                "entry_id": entry.entry_id,
+                "dashboard_url": dashboard_url,
+            },
+        )
+        _LOGGER.info("Dashboard refresh triggered for %s", dashboard_url)
+    except Exception as err:  # pylint: disable=broad-except
+        _LOGGER.warning("Failed to trigger dashboard refresh (non-critical): %s", err)
 
 
 async def _async_register_services(hass: HomeAssistant) -> None:
