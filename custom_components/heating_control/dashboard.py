@@ -368,104 +368,100 @@ class HeatingControlDashboardStrategy(Strategy):
         if not snapshot or not snapshot.device_decisions:
             return []
 
-        device_cards: List[Dict[str, Any]] = []
+        device_entity_cards: List[Dict[str, Any]] = []
 
         for device_entity in climate_entities:
             device_decision = snapshot.device_decisions.get(device_entity)
             device_name = self._friendly_name(device_entity)
 
-            if not device_decision:
-                # Device has no decision (shouldn't happen but handle gracefully)
-                device_cards.append(
-                    {
-                        "type": "button",
-                        "entity": device_entity,
-                        "name": device_name,
-                        "icon": "mdi:air-conditioner",
-                        "icon_color": "grey",
-                        "show_state": False,
-                        "layout": "vertical",
-                        "label": "No schedule",
-                        "tap_action": {"action": "more-info"},
-                    }
-                )
-                continue
+            # Build entity list for this device
+            entities: List[Dict[str, Any]] = []
 
-            # Get the active schedule name
-            if device_decision.active_schedules:
+            # Add the climate entity itself as a control
+            entities.append({
+                "entity": device_entity,
+                "name": device_name,
+            })
+
+            if not device_decision:
+                # Device has no decision
+                entities.append({
+                    "type": "attribute",
+                    "entity": device_entity,
+                    "attribute": "temperature",
+                    "name": "Status",
+                    "suffix": " - No schedule",
+                })
+            elif device_decision.active_schedules:
+                # Device has an active schedule
                 schedule_name = device_decision.active_schedules[0]
-                is_active = device_decision.should_be_active
                 hvac_mode = device_decision.hvac_mode or "off"
                 target_temp = device_decision.target_temp
                 target_fan = device_decision.target_fan
+                is_active = device_decision.should_be_active
 
-                # Build status content
-                status_parts = [f"Mode: {hvac_mode.title()}"]
+                # Active schedule
+                entities.append({
+                    "type": "text",
+                    "name": "Active Schedule",
+                    "text": schedule_name,
+                })
+
+                # Status
+                status_value = "Active" if is_active else "Inactive"
+                entities.append({
+                    "type": "text",
+                    "name": "Status",
+                    "text": status_value,
+                })
+
+                # HVAC Mode
+                entities.append({
+                    "type": "text",
+                    "name": "Mode",
+                    "text": hvac_mode.title(),
+                })
+
+                # Target Temperature
                 if target_temp is not None:
-                    status_parts.append(f"{target_temp:g}°")
+                    entities.append({
+                        "type": "text",
+                        "name": "Target Temperature",
+                        "text": f"{target_temp:g}°C",
+                    })
+
+                # Current Temperature (from climate entity attribute)
+                entities.append({
+                    "type": "attribute",
+                    "entity": device_entity,
+                    "attribute": "current_temperature",
+                    "name": "Current Temperature",
+                    "suffix": "°C",
+                })
+
+                # Fan Mode
                 if target_fan:
-                    status_parts.append(f"Fan: {target_fan}")
-
-                status_text = " • ".join(status_parts)
-                label_lines = [f"Schedule: {schedule_name}"]
-
-                # Color based on activity
-                if is_active:
-                    if hvac_mode in ["heat", "auto"]:
-                        icon_color = "red"
-                        icon = "mdi:fire"
-                    elif hvac_mode in ["cool", "heat_cool"]:
-                        icon_color = "blue"
-                        icon = "mdi:snowflake"
-                    else:
-                        icon_color = "green"
-                        icon = "mdi:fan"
-                    label_lines.append(status_text)
-                else:
-                    icon_color = "grey"
-                    icon = "mdi:power-off"
-                    label_lines.append("Off")
-
-                device_cards.append(
-                    {
-                        "type": "button",
-                        "entity": device_entity,
-                        "name": device_name,
-                        "icon": icon,
-                        "icon_color": icon_color,
-                        "show_state": False,
-                        "layout": "vertical",
-                        "label": "\n".join(label_lines),
-                        "tap_action": {"action": "more-info"},
-                    }
-                )
+                    entities.append({
+                        "type": "text",
+                        "name": "Fan Mode",
+                        "text": target_fan,
+                    })
             else:
                 # No active schedule
-                device_cards.append(
-                    {
-                        "type": "button",
-                        "entity": device_entity,
-                        "name": device_name,
-                        "icon": "mdi:air-conditioner",
-                        "icon_color": "grey",
-                        "show_state": False,
-                        "layout": "vertical",
-                        "label": "No active schedule",
-                        "tap_action": {"action": "more-info"},
-                    }
-                )
+                entities.append({
+                    "type": "text",
+                    "name": "Status",
+                    "text": "No active schedule",
+                })
 
-        if device_cards:
-            return [
-                {
-                    "type": "grid",
-                    "columns": 2,
-                    "square": False,
-                    "cards": device_cards,
-                }
-            ]
+            # Create an entities card for this device
+            device_entity_cards.append({
+                "type": "entities",
+                "title": device_name,
+                "entities": entities,
+            })
 
-        return []
+        return device_entity_cards
 
     def _build_schedule_cards(
         self, entry_id: str, snapshot

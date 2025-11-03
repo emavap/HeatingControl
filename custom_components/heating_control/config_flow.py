@@ -739,11 +739,40 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
             }
         )
 
+        # Build detailed schedule information
+        schedule_info_parts = [
+            f"**Editing schedule: {current_schedule.get(CONF_SCHEDULE_NAME, 'Unnamed')}**",
+            "",
+            f"**Current Configuration:**",
+            f"- Start Time: {current_schedule.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START)}",
+            f"- HVAC Mode (Home): {current_schedule.get(CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE).title()}",
+            f"- Temperature (Home): {current_schedule.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE)}°C",
+        ]
+
+        away_mode = current_schedule.get(CONF_SCHEDULE_AWAY_HVAC_MODE)
+        away_temp = current_schedule.get(CONF_SCHEDULE_AWAY_TEMPERATURE)
+        if away_mode:
+            schedule_info_parts.append(f"- HVAC Mode (Away): {away_mode.title()}")
+        if away_temp is not None:
+            schedule_info_parts.append(f"- Temperature (Away): {away_temp}°C")
+
+        fan_mode = current_schedule.get(CONF_SCHEDULE_FAN_MODE)
+        if fan_mode:
+            schedule_info_parts.append(f"- Fan Mode: {fan_mode}")
+
+        schedule_info_parts.append(f"- Only When Home: {'Yes' if current_schedule.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True) else 'No'}")
+
+        devices = current_schedule.get(CONF_SCHEDULE_DEVICES, [])
+        if devices:
+            schedule_info_parts.append(f"- Devices: {len(devices)}")
+
+        schedule_info = "\n".join(schedule_info_parts)
+
         return self.async_show_form(
             step_id="edit_schedule",
             data_schema=data_schema,
             description_placeholders={
-                "info": f"Editing schedule: {current_schedule.get(CONF_SCHEDULE_NAME, 'Unnamed')}"
+                "info": schedule_info
             }
         )
 
