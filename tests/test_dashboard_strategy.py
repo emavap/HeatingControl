@@ -127,7 +127,7 @@ async def test_strategy_does_not_force_single_column_layout() -> None:
     history_section = view["sections"][0]
     assert history_section["title"] == "Temperature History (48h)"
     assert history_section["columns"] == 1
-    assert history_section.get("column_span") == 3
+    assert history_section.get("column_span") == "full"
     history_card = history_section["cards"][0]
     assert history_card["type"] == "custom:apexcharts-card"
     assert history_card["graph_span"] == "48h"

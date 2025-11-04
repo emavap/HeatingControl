@@ -99,7 +99,7 @@ class HeatingControlDashboardStrategy(Strategy):
                     "type": "grid",
                     "columns": 1,
                     "square": False,
-                    "column_span": 3,
+                    "column_span": "full",
                     "title": "Temperature History (48h)",
                     "cards": history_cards,
                 }
