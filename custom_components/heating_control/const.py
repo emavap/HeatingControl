@@ -55,7 +55,6 @@ ATTR_SCHEDULE_NAME = "schedule_name"
 SCHEDULE_SWITCH_ENTITY_TEMPLATE = "switch.heating_schedule_{entry}_{schedule}_enabled"
 SCHEDULE_BINARY_ENTITY_TEMPLATE = "binary_sensor.heating_schedule_{entry}_{schedule}_active"
 DEVICE_BINARY_ENTITY_TEMPLATE = "binary_sensor.heating_device_{entry}_{device}"
-
 # Entity IDs
 ENTITY_DECISION_DIAGNOSTICS = "sensor.heating_control_decision_diagnostics"
 ENTITY_EVERYONE_AWAY = "binary_sensor.heating_control_everyone_away"
