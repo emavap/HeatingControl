@@ -1,6 +1,5 @@
 """Tests for the Heating Control Lovelace dashboard strategy."""
 from __future__ import annotations
-
 from types import SimpleNamespace
 
 import pytest
@@ -11,7 +10,12 @@ from custom_components.heating_control.const import (
     DOMAIN,
 )
 from custom_components.heating_control.dashboard import HeatingControlDashboardStrategy
-from custom_components.heating_control.models import DiagnosticsSnapshot, HeatingStateSnapshot
+from custom_components.heating_control.models import (
+    DiagnosticsSnapshot,
+    DeviceDecision,
+    HeatingStateSnapshot,
+    ScheduleDecision,
+)
 
 
 class DummyConfigEntry:
@@ -59,9 +63,39 @@ def _build_snapshot(**diagnostic_kwargs) -> HeatingStateSnapshot:
     )
 
 
+FRONTEND_RESOURCE_KEY = "frontend_extra_module_url"
+APEX_RESOURCE_URL = "/hacsfiles/apexcharts-card/apexcharts-card.js"
+
+
+def _state(state: str, *, current: float | None = None, target: float | None = None):
+    """Return a mock Home Assistant state for a climate entity."""
+    attributes = {}
+    if current is not None:
+        attributes["current_temperature"] = current
+    if target is not None:
+        attributes["temperature"] = target
+    return SimpleNamespace(state=state, attributes=attributes)
+
+
+def _build_hass(
+    coordinator_map: dict[str, DummyCoordinator],
+    *,
+    states: dict[str, SimpleNamespace] | None = None,
+    include_apex: bool = True,
+):
+    """Construct a minimal hass namespace for strategy tests."""
+    hass_data: dict[str, object] = {DOMAIN: coordinator_map}
+    if include_apex:
+        hass_data[FRONTEND_RESOURCE_KEY] = {APEX_RESOURCE_URL}
+
+    state_map = states or {}
+    return SimpleNamespace(
+        data=hass_data,
+        states=SimpleNamespace(get=lambda entity_id: state_map.get(entity_id)),
+    )
 @pytest.mark.asyncio
-async def test_strategy_renders_single_column_layout() -> None:
-    """Dashboard view should render as a single column without diagnostics summary."""
+async def test_strategy_does_not_force_single_column_layout() -> None:
+    """Dashboard view should not be forced into a single column when rendered."""
     config_entry = DummyConfigEntry(
         "entry-one",
         options={
@@ -79,15 +113,36 @@ async def test_strategy_renders_single_column_layout() -> None:
             trackers_total=0,
         ),
     )
-    hass = SimpleNamespace(data={DOMAIN: {"entry-one": coordinator}})
+    state_map = {
+        "climate.living_room": _state("heat", current=21.5, target=22.0),
+    }
+    hass = _build_hass({"entry-one": coordinator}, states=state_map)
     strategy = HeatingControlDashboardStrategy(hass, {"entry_id": "entry-one"})
 
     result = await strategy.async_generate()
 
     view = result["views"][0]
-    assert view["max_columns"] == 1
+    assert "max_columns" not in view
 
-    airco_section = view["sections"][0]
+    history_section = view["sections"][0]
+    history_heading, history_card = history_section["cards"]
+    assert history_heading["type"] == "heading"
+    assert history_heading["heading"] == "Temperature History (48h)"
+    assert history_card["type"] == "custom:apexcharts-card"
+    assert history_card["graph_span"] == "48h"
+    assert history_card["update_interval"] == "5min"
+    assert history_card["header"]["show"] is False
+    history_series = history_card["series"]
+    assert len(history_series) == 2
+    assert history_series[0]["entity"] == "climate.living_room"
+    assert history_series[0]["attribute"] == "current_temperature"
+    assert "Actual" in history_series[0]["name"]
+    assert history_series[1]["entity"] == "climate.living_room"
+    assert history_series[1]["attribute"] == "temperature"
+    assert "Target" in history_series[1]["name"]
+
+    # First section is temperature history, second is airco
+    airco_section = view["sections"][1]
     assert airco_section["type"] == "grid"
     assert airco_section["columns"] == 1
     assert airco_section["square"] is False
@@ -96,7 +151,7 @@ async def test_strategy_renders_single_column_layout() -> None:
     assert thermostat_grid["type"] == "grid"
     assert thermostat_grid["columns"] == 1
 
-    diagnostics_section = view["sections"][1]
+    diagnostics_section = view["sections"][2]
     heading_card, status_card, *rest = diagnostics_section["cards"]
     assert heading_card["type"] == "heading"
     assert status_card["type"] == "entities"
@@ -115,6 +170,58 @@ async def test_strategy_renders_single_column_layout() -> None:
         for card in rest
         if card.get("type") == "markdown"
     )
+
+
+@pytest.mark.asyncio
+async def test_temperature_history_shows_message_when_apex_missing() -> None:
+    """A helpful message should be shown if ApexCharts is not installed."""
+    config_entry = DummyConfigEntry(
+        "entry-one",
+        options={
+            CONF_CLIMATE_DEVICES: ["climate.living_room"],
+            CONF_DEVICE_TRACKERS: [],
+        },
+    )
+    coordinator = DummyCoordinator(config_entry, _build_snapshot())
+    state_map = {
+        "climate.living_room": _state("heat", current=21.0, target=22.0),
+    }
+    hass = _build_hass({"entry-one": coordinator}, states=state_map, include_apex=False)
+    strategy = HeatingControlDashboardStrategy(hass, {"entry_id": "entry-one"})
+
+    result = await strategy.async_generate()
+
+    history_section = result["views"][0]["sections"][0]
+    heading_card, message_card = history_section["cards"]
+    assert heading_card["type"] == "heading"
+    assert message_card["type"] == "markdown"
+    assert "ApexCharts Card" in message_card["content"]
+
+
+@pytest.mark.asyncio
+async def test_temperature_history_waits_for_device_attributes() -> None:
+    """A message should be shown until climate attributes are available."""
+    config_entry = DummyConfigEntry(
+        "entry-attr",
+        options={
+            CONF_CLIMATE_DEVICES: ["climate.living_room"],
+            CONF_DEVICE_TRACKERS: [],
+        },
+    )
+    coordinator = DummyCoordinator(config_entry, _build_snapshot())
+    state_map = {
+        "climate.living_room": _state("heat"),
+    }
+    hass = _build_hass({"entry-attr": coordinator}, states=state_map)
+    strategy = HeatingControlDashboardStrategy(hass, {"entry_id": "entry-attr"})
+
+    result = await strategy.async_generate()
+
+    history_section = result["views"][0]["sections"][0]
+    heading_card, message_card = history_section["cards"]
+    assert heading_card["type"] == "heading"
+    assert message_card["type"] == "markdown"
+    assert "Temperature history will appear" in message_card["content"]
 
 
 @pytest.mark.asyncio
@@ -142,17 +249,38 @@ async def test_device_section_uses_multiple_columns_when_multiple_devices() -> N
             anyone_home=True,
         ),
     )
-    hass = SimpleNamespace(data={DOMAIN: {"entry-two": coordinator}})
+    state_map = {
+        "climate.bedroom": _state("heat", current=19.0, target=20.0),
+        "climate.office": _state("cool", current=23.0, target=21.0),
+        "climate.kitchen": _state("auto", current=21.5, target=22.0),
+    }
+    hass = _build_hass({"entry-two": coordinator}, states=state_map)
     strategy = HeatingControlDashboardStrategy(hass, {"entry_id": "entry-two"})
 
     result = await strategy.async_generate()
 
-    airco_section = result["views"][0]["sections"][0]
+    history_section = result["views"][0]["sections"][0]
+    history_card = history_section["cards"][1]
+    assert history_card["type"] == "custom:apexcharts-card"
+    series = history_card["series"]
+    assert len(series) == 6  # 3 devices * (actual + target)
+    expected_pairs = [
+        ("climate.bedroom", "current_temperature"),
+        ("climate.bedroom", "temperature"),
+        ("climate.office", "current_temperature"),
+        ("climate.office", "temperature"),
+        ("climate.kitchen", "current_temperature"),
+        ("climate.kitchen", "temperature"),
+    ]
+    assert [(entry["entity"], entry["attribute"]) for entry in series] == expected_pairs
+
+    # First section is temperature history, second is airco
+    airco_section = result["views"][0]["sections"][1]
     thermostat_grid = airco_section["cards"][1]
     assert thermostat_grid["type"] == "grid"
     assert thermostat_grid["columns"] > 1
 
-    diagnostics_section = result["views"][0]["sections"][1]
+    diagnostics_section = result["views"][0]["sections"][2]
     markdown_contents = [
         card.get("content", "")
         for card in diagnostics_section["cards"]
@@ -162,9 +290,97 @@ async def test_device_section_uses_multiple_columns_when_multiple_devices() -> N
 
 
 @pytest.mark.asyncio
+async def test_device_cards_precede_schedule_cards_in_diagnostics_section() -> None:
+    """Device diagnostic cards should appear before schedule cards."""
+    schedule_decision = ScheduleDecision(
+        schedule_id="weekday",
+        name="Weekday AM",
+        start_time="06:00",
+        end_time="08:00",
+        hvac_mode="heat",
+        hvac_mode_home="heat",
+        hvac_mode_away="off",
+        only_when_home=False,
+        enabled=True,
+        is_active=True,
+        in_time_window=True,
+        presence_ok=True,
+        device_count=1,
+        devices=("climate.living_room",),
+        schedule_device_trackers=(),
+        target_temp=21.0,
+        target_temp_home=21.0,
+        target_temp_away=18.0,
+        target_fan=None,
+    )
+
+    device_decision = DeviceDecision(
+        entity_id="climate.living_room",
+        should_be_active=True,
+        active_schedules=("Weekday AM",),
+        hvac_mode="heat",
+        target_temp=21.0,
+        target_fan=None,
+    )
+
+    diagnostics = DiagnosticsSnapshot(
+        now_time="2024-01-01T06:30:00",
+        tracker_states={},
+        trackers_home=1,
+        trackers_total=1,
+        auto_heating_enabled=True,
+        schedule_count=1,
+        active_schedules=1,
+        active_devices=1,
+    )
+
+    snapshot = HeatingStateSnapshot(
+        everyone_away=False,
+        anyone_home=True,
+        schedule_decisions={"weekday": schedule_decision},
+        device_decisions={"climate.living_room": device_decision},
+        diagnostics=diagnostics,
+    )
+
+    config_entry = DummyConfigEntry(
+        "entry-three",
+        options={
+            CONF_CLIMATE_DEVICES: ["climate.living_room"],
+            CONF_DEVICE_TRACKERS: [],
+        },
+    )
+    coordinator = DummyCoordinator(config_entry, snapshot)
+    state_map = {
+        "climate.living_room": _state("heat", current=21.5, target=22.0),
+    }
+    hass = _build_hass({"entry-three": coordinator}, states=state_map)
+    strategy = HeatingControlDashboardStrategy(hass, {"entry_id": "entry-three"})
+
+    result = await strategy.async_generate()
+
+    # First section is temperature history, second is diagnostics
+    diagnostics_cards = result["views"][0]["sections"][2]["cards"]
+    device_heading_index = next(
+        index
+        for index, card in enumerate(diagnostics_cards)
+        if card.get("type") == "heading" and card.get("heading") == "Device → Schedule Mapping"
+    )
+    schedule_heading_index = next(
+        index
+        for index, card in enumerate(diagnostics_cards)
+        if card.get("type") == "heading" and card.get("heading") == "Schedules"
+    )
+
+    assert device_heading_index < schedule_heading_index
+
+
+@pytest.mark.asyncio
 async def test_strategy_handles_missing_integration() -> None:
     """When the coordinator is missing, a helpful message should be returned."""
-    hass = SimpleNamespace(data={})
+    hass = SimpleNamespace(
+        data={},
+        states=SimpleNamespace(get=lambda entity_id: None),
+    )
     strategy = HeatingControlDashboardStrategy(hass, {})
 
     result = await strategy.async_generate()
@@ -173,3 +389,148 @@ async def test_strategy_handles_missing_integration() -> None:
     message_card = view["sections"][0]["cards"][0]
     assert message_card["type"] == "markdown"
     assert "integration is not loaded" in message_card["content"]
+
+
+@pytest.mark.asyncio
+async def test_temperature_history_card_appears_first() -> None:
+    """Temperature history graph should be the first section when devices are configured."""
+    config_entry = DummyConfigEntry(
+        "entry-four",
+        options={
+            CONF_CLIMATE_DEVICES: ["climate.bedroom", "climate.living_room"],
+            CONF_DEVICE_TRACKERS: [],
+        },
+    )
+    coordinator = DummyCoordinator(config_entry, _build_snapshot())
+
+    state_map = {
+        "climate.bedroom": _state("heat", current=18.5, target=20.0),
+        "climate.living_room": _state("cool", current=23.0, target=21.0),
+    }
+    hass = _build_hass({"entry-four": coordinator}, states=state_map)
+    strategy = HeatingControlDashboardStrategy(hass, {"entry_id": "entry-four"})
+
+    result = await strategy.async_generate()
+
+    view = result["views"][0]
+    sections = view["sections"]
+
+    # First section should be temperature history
+    history_section = sections[0]
+    assert history_section["type"] == "grid"
+
+    # Check for heading
+    heading_card = history_section["cards"][0]
+    assert heading_card["type"] == "heading"
+    assert heading_card["heading"] == "Temperature History (48h)"
+
+    # Check for apexcharts card
+    history_card = history_section["cards"][1]
+    assert history_card["type"] == "custom:apexcharts-card"
+    assert history_card["graph_span"] == "48h"
+    assert history_card["update_interval"] == "5min"
+
+    # Verify series include both actual and target temperatures for each device
+    series = history_card["series"]
+    assert len(series) == 4  # 2 devices * 2 series each
+    expected_pairs = [
+        ("climate.bedroom", "current_temperature"),
+        ("climate.bedroom", "temperature"),
+        ("climate.living_room", "current_temperature"),
+        ("climate.living_room", "temperature"),
+    ]
+    assert [(entry["entity"], entry["attribute"]) for entry in series] == expected_pairs
+    names = [entry["name"] for entry in series]
+    assert all("Actual" in name or "Target" in name for name in names)
+
+
+@pytest.mark.asyncio
+async def test_temperature_history_card_not_shown_when_no_devices() -> None:
+    """Temperature history graph should not appear when no climate devices are configured."""
+    config_entry = DummyConfigEntry(
+        "entry-five",
+        options={
+            CONF_CLIMATE_DEVICES: [],
+            CONF_DEVICE_TRACKERS: [],
+        },
+    )
+    coordinator = DummyCoordinator(config_entry, _build_snapshot())
+    hass = _build_hass({"entry-five": coordinator})
+    strategy = HeatingControlDashboardStrategy(hass, {"entry_id": "entry-five"})
+
+    result = await strategy.async_generate()
+
+    view = result["views"][0]
+    sections = view["sections"]
+
+    # First section should be "Aircos & Thermostats" since there's no history card
+    first_section = sections[0]
+    heading_card = first_section["cards"][0]
+    assert heading_card["type"] == "heading"
+    assert heading_card["heading"] == "Aircos & Thermostats"
+
+
+@pytest.mark.asyncio
+async def test_temperature_history_excludes_target_when_hvac_off() -> None:
+    """Target temperature should only appear for devices in heat/cool mode."""
+    config_entry = DummyConfigEntry(
+        "entry-six",
+        options={
+            CONF_CLIMATE_DEVICES: [
+                "climate.bedroom",  # heat mode - should show target
+                "climate.living_room",  # off mode - should NOT show target
+                "climate.kitchen",  # auto mode - should show target
+            ],
+            CONF_DEVICE_TRACKERS: [],
+        },
+    )
+    coordinator = DummyCoordinator(config_entry, _build_snapshot())
+
+    state_map = {
+        "climate.bedroom": _state("heat", current=18.0, target=20.0),
+        "climate.living_room": _state("off", current=19.5),
+        "climate.kitchen": _state("auto", current=20.5, target=21.0),
+    }
+    hass = _build_hass({"entry-six": coordinator}, states=state_map)
+    strategy = HeatingControlDashboardStrategy(hass, {"entry_id": "entry-six"})
+
+    result = await strategy.async_generate()
+
+    view = result["views"][0]
+    history_section = view["sections"][0]
+    history_card = history_section["cards"][1]
+    assert history_card["type"] == "custom:apexcharts-card"
+
+    series = history_card["series"]
+    expected_pairs = [
+        ("climate.bedroom", "current_temperature"),
+        ("climate.bedroom", "temperature"),
+        ("climate.living_room", "current_temperature"),
+        ("climate.kitchen", "current_temperature"),
+        ("climate.kitchen", "temperature"),
+    ]
+
+    # Should have 3 actual temp series + 2 target temp series (bedroom and kitchen only)
+    assert len(series) == 5
+    assert sorted((entry["entity"], entry["attribute"]) for entry in series) == sorted(
+        expected_pairs
+    )
+
+    # Check bedroom: should have both actual and target
+    bedroom_series = [entry for entry in series if "bedroom" in entry["name"].lower()]
+    assert len(bedroom_series) == 2
+    assert any("Actual" in entry["name"] for entry in bedroom_series)
+    assert any("Target" in entry["name"] for entry in bedroom_series)
+
+    # Check living_room: should have only actual (no target because it's off)
+    living_room_series = [
+        entry for entry in series if "living room" in entry["name"].lower()
+    ]
+    assert len(living_room_series) == 1
+    assert "Actual" in living_room_series[0]["name"]
+
+    # Check kitchen: should have both actual and target (auto mode)
+    kitchen_series = [entry for entry in series if "kitchen" in entry["name"].lower()]
+    assert len(kitchen_series) == 2
+    assert any("Actual" in entry["name"] for entry in kitchen_series)
+    assert any("Target" in entry["name"] for entry in kitchen_series)

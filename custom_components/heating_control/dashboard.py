@@ -1,7 +1,7 @@
 """Dynamic Lovelace dashboard strategy for Heating Control."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence
 
 try:
     from homeassistant.components.lovelace.strategy import Strategy as LovelaceStrategy
@@ -91,6 +91,21 @@ class HeatingControlDashboardStrategy(Strategy):
 
         sections: List[Dict[str, Any]] = []
 
+        # Add temperature history graph as the first section
+        history_card = self._build_temperature_history_card(climate_entities)
+        if history_card:
+            sections.append(
+                {
+                    "type": "grid",
+                    "columns": 1,
+                    "square": False,
+                    "cards": self._wrap_with_heading(
+                        "Temperature History (48h)",
+                        history_card,
+                    ),
+                }
+            )
+
         sections.append(
             {
                 "type": "grid",
@@ -137,7 +152,6 @@ class HeatingControlDashboardStrategy(Strategy):
                     "title": "Smart Heating",
                     "path": "smart-heating",
                     "type": "sections",
-                    "max_columns": 1,
                     "sections": sections,
                 }
             ],
@@ -204,6 +218,144 @@ class HeatingControlDashboardStrategy(Strategy):
             ]
         return []
 
+    def _build_temperature_history_card(
+        self, climate_entities: Sequence[str]
+    ) -> List[Dict[str, Any]]:
+        """Create a history graph showing target and actual temperatures for all devices."""
+        if not climate_entities:
+            return []
+
+        if not self._apexcharts_available():
+            return [
+                {
+                    "type": "markdown",
+                    "content": (
+                        "Install the [ApexCharts Card](https://github.com/RomRider/apexcharts-card) "
+                        "to view temperature history."
+                    ),
+                }
+            ]
+
+        series: List[Dict[str, Any]] = []
+
+        for climate_entity in climate_entities:
+            state = self.hass.states.get(climate_entity)
+            if not state:
+                continue
+
+            # Store state data immediately to prevent race conditions
+            state_value = state.state
+            attributes = dict(state.attributes) if state.attributes else {}
+
+            device_name = self._friendly_name(climate_entity)
+            current_temperature = attributes.get("current_temperature")
+            target_temperature = attributes.get("temperature")
+
+            # Validate that temperatures are numeric (Bug #4 fix)
+            if current_temperature is not None:
+                try:
+                    float(current_temperature)  # Validate it's numeric
+                    series.append(
+                        {
+                            "entity": climate_entity,
+                            "attribute": "current_temperature",
+                            "name": f"{device_name} Actual",
+                            "type": "line",
+                        }
+                    )
+                except (ValueError, TypeError):
+                    # Skip non-numeric temperatures
+                    pass
+
+            if (
+                target_temperature is not None
+                and state_value in ("heat", "cool", "heat_cool", "auto")
+            ):
+                try:
+                    float(target_temperature)  # Validate it's numeric
+                    series.append(
+                        {
+                            "entity": climate_entity,
+                            "attribute": "temperature",
+                            "name": f"{device_name} Target",
+                            "type": "line",
+                        }
+                    )
+                except (ValueError, TypeError):
+                    # Skip non-numeric temperatures
+                    pass
+
+        if not series:
+            return [
+                {
+                    "type": "markdown",
+                    "content": (
+                        "Temperature history will appear once devices report "
+                        "current and target temperatures."
+                    ),
+                }
+            ]
+
+        return [
+            {
+                "type": "custom:apexcharts-card",
+                "graph_span": "48h",
+                "update_interval": "5min",
+                "header": {"show": False},
+                "series": series,
+            }
+        ]
+
+    def _apexcharts_available(self) -> bool:
+        """Return True if the ApexCharts custom card appears to be installed."""
+        try:
+            from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
+        except ImportError:  # pragma: no cover - frontend always present in HA
+            return False
+
+        resource_sources: List[List[str]] = []
+
+        # Check frontend resources (Bug #8 fix: wrap in try/except)
+        try:
+            frontend_resources = self.hass.data.get(DATA_EXTRA_MODULE_URL)
+            if frontend_resources:
+                if isinstance(frontend_resources, dict):
+                    for value in frontend_resources.values():
+                        if isinstance(value, (list, tuple, set)):
+                            resource_sources.append(list(value))
+                elif isinstance(frontend_resources, (list, tuple, set)):
+                    resource_sources.append(list(frontend_resources))
+        except (AttributeError, TypeError, KeyError):
+            pass  # Frontend data structure changed or unavailable
+
+        # Check Lovelace storage resources (Bug #3 & #8 fix: use list instead of generator)
+        try:
+            lovelace_data = self.hass.data.get("lovelace")
+            if isinstance(lovelace_data, dict):
+                storage_resources = lovelace_data.get("resources")
+                if storage_resources and isinstance(storage_resources, (list, tuple)):
+                    # Use list comprehension instead of generator to prevent exhaustion
+                    resource_sources.append(
+                        [resource.get("url") for resource in storage_resources if resource]
+                    )
+        except (AttributeError, TypeError, KeyError):
+            pass  # Lovelace data structure changed or unavailable
+
+        # Check all resource URLs (Bug #5 & #6 fix: better matching + exception handling)
+        for source in resource_sources:
+            if source:
+                for url in source:
+                    try:
+                        # Bug #5 fix: More specific URL matching
+                        # Bug #9 fix: Unicode-safe with .lower()
+                        url_str = str(url).lower() if url else ""
+                        if "apexcharts-card.js" in url_str or "/apexcharts-card/" in url_str:
+                            return True
+                    except (TypeError, ValueError, AttributeError):
+                        # Bug #6 fix: Handle str() conversion failures
+                        continue
+        return False
+
     def _build_status_cards(
         self,
         entry_id: str,
@@ -234,15 +386,6 @@ class HeatingControlDashboardStrategy(Strategy):
         )
 
         if snapshot:
-            schedule_cards = self._build_schedule_cards(entry_id, snapshot)
-            if schedule_cards:
-                cards.extend(
-                    self._wrap_with_heading(
-                        "Schedules",
-                        schedule_cards,
-                    )
-                )
-
             # Create device status cards showing which schedule controls each device
             device_status_cards = self._build_device_status_cards(
                 snapshot, climate_entities
@@ -252,6 +395,15 @@ class HeatingControlDashboardStrategy(Strategy):
                     self._wrap_with_heading(
                         "Device → Schedule Mapping",
                         device_status_cards,
+                    )
+                )
+
+            schedule_cards = self._build_schedule_cards(entry_id, snapshot)
+            if schedule_cards:
+                cards.extend(
+                    self._wrap_with_heading(
+                        "Schedules",
+                        schedule_cards,
                     )
                 )
 
