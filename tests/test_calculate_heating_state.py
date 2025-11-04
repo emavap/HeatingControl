@@ -12,6 +12,7 @@ from custom_components.heating_control.const import (
     CONF_DEVICE_TRACKERS,
     CONF_SCHEDULES,
     CONF_SCHEDULE_DEVICES,
+    CONF_SCHEDULE_DEVICE_TRACKERS,
     CONF_SCHEDULE_ENABLED,
     CONF_SCHEDULE_END,
     CONF_SCHEDULE_FAN_MODE,
@@ -800,3 +801,197 @@ def test_current_time_equals_schedule_start(monkeypatch, dummy_hass: DummyHass):
     assert bedroom.hvac_mode == "heat"
     assert bedroom.target_temp == 22.0
     assert bedroom.active_schedules == ("Morning",)
+
+
+def test_schedule_with_invalid_per_schedule_trackers(monkeypatch, dummy_hass: DummyHass):
+    """Test that schedules with invalid per-schedule trackers fall back to global presence."""
+    freeze_time(monkeypatch, 7, 30)
+
+    # Set up global trackers showing someone is home
+    dummy_hass.states.set("device_tracker.user1", DummyState("home", {}))
+
+    # Schedule with invalid per-schedule trackers (None values)
+    schedule = base_schedule(
+        "Morning",
+        "07:00",
+        "09:00",
+        devices=["climate.bedroom"],
+        temperature=22.0,
+    )
+    schedule[CONF_SCHEDULE_DEVICE_TRACKERS] = [None, ""]  # Invalid trackers
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_CLIMATE_DEVICES: ["climate.bedroom"],
+        CONF_DEVICE_TRACKERS: ["device_tracker.user1"],  # Global tracker shows home
+        CONF_SCHEDULES: [schedule],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    # Should use global presence (home) since per-schedule trackers are invalid
+    assert result.anyone_home is True
+    morning_decision = result.schedule_decisions["Morning"]
+    assert morning_decision.presence_ok is True  # Fixed: should be True now
+    assert morning_decision.is_active is True
+
+
+def test_schedule_with_nonexistent_per_schedule_trackers(monkeypatch, dummy_hass: DummyHass):
+    """Test that schedules with nonexistent per-schedule trackers fall back to global presence."""
+    freeze_time(monkeypatch, 7, 30)
+
+    # Set up global trackers showing someone is home
+    dummy_hass.states.set("device_tracker.user1", DummyState("home", {}))
+
+    # Schedule with nonexistent per-schedule tracker entity IDs
+    schedule = base_schedule(
+        "Morning",
+        "07:00",
+        "09:00",
+        devices=["climate.bedroom"],
+        temperature=22.0,
+    )
+    schedule[CONF_SCHEDULE_DEVICE_TRACKERS] = [
+        "device_tracker.deleted_device",
+        "device_tracker.another_invalid",
+    ]
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_CLIMATE_DEVICES: ["climate.bedroom"],
+        CONF_DEVICE_TRACKERS: ["device_tracker.user1"],  # Global tracker shows home
+        CONF_SCHEDULES: [schedule],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    # Global presence should show someone is home
+    assert result.anyone_home is True
+    morning_decision = result.schedule_decisions["Morning"]
+
+    # BEFORE FIX: presence_ok would be False because invalid trackers returned False
+    # AFTER FIX: presence_ok should be True because invalid trackers are filtered out
+    # and it falls back to global presence
+    assert morning_decision.presence_ok is True
+    assert morning_decision.is_active is True
+
+
+def test_schedule_with_empty_per_schedule_trackers_list(monkeypatch, dummy_hass: DummyHass):
+    """Test that schedules with empty per-schedule tracker list use global presence."""
+    freeze_time(monkeypatch, 7, 30)
+
+    # Set up global trackers showing someone is home
+    dummy_hass.states.set("device_tracker.user1", DummyState("home", {}))
+
+    # Schedule with explicitly empty per-schedule trackers
+    schedule = base_schedule(
+        "Morning",
+        "07:00",
+        "09:00",
+        devices=["climate.bedroom"],
+        temperature=22.0,
+    )
+    schedule[CONF_SCHEDULE_DEVICE_TRACKERS] = []  # Empty list
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_CLIMATE_DEVICES: ["climate.bedroom"],
+        CONF_DEVICE_TRACKERS: ["device_tracker.user1"],  # Global tracker shows home
+        CONF_SCHEDULES: [schedule],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    # Should use global presence
+    assert result.anyone_home is True
+    morning_decision = result.schedule_decisions["Morning"]
+    assert morning_decision.presence_ok is True
+    assert morning_decision.is_active is True
+
+
+def test_schedule_with_unavailable_per_schedule_tracker(monkeypatch, dummy_hass: DummyHass):
+    """Unavailable per-schedule trackers should fall back to global presence."""
+    freeze_time(monkeypatch, 7, 30)
+
+    # Global tracker shows someone is home
+    dummy_hass.states.set("device_tracker.user1", DummyState("home", {}))
+
+    # Per-schedule tracker exists but is unavailable
+    dummy_hass.states.set("device_tracker.specific_user", DummyState("unavailable", {}))
+
+    schedule = base_schedule(
+        "Morning",
+        "07:00",
+        "09:00",
+        devices=["climate.bedroom"],
+        temperature=22.0,
+    )
+    schedule[CONF_SCHEDULE_DEVICE_TRACKERS] = ["device_tracker.specific_user"]
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_CLIMATE_DEVICES: ["climate.bedroom"],
+        CONF_DEVICE_TRACKERS: ["device_tracker.user1"],
+        CONF_SCHEDULES: [schedule],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    # Global presence should take over while tracker is unavailable
+    assert result.anyone_home is True
+    morning_decision = result.schedule_decisions["Morning"]
+    assert morning_decision.presence_ok is True
+    assert morning_decision.is_active is True
+
+    # Change tracker to unknown state to ensure we still fall back
+    dummy_hass.states.set("device_tracker.specific_user", DummyState("unknown", {}))
+    result_unknown = coordinator._calculate_heating_state()
+    morning_unknown = result_unknown.schedule_decisions["Morning"]
+    assert morning_unknown.presence_ok is True
+    assert morning_unknown.is_active is True
+
+
+def test_schedule_with_valid_per_schedule_trackers_not_home(monkeypatch, dummy_hass: DummyHass):
+    """Test that valid per-schedule trackers override global presence."""
+    freeze_time(monkeypatch, 7, 30)
+
+    # Global trackers show someone is home
+    dummy_hass.states.set("device_tracker.user1", DummyState("home", {}))
+
+    # But per-schedule tracker shows nobody home
+    dummy_hass.states.set("device_tracker.specific_user", DummyState("not_home", {}))
+
+    # Schedule with valid per-schedule tracker
+    schedule = base_schedule(
+        "Morning",
+        "07:00",
+        "09:00",
+        devices=["climate.bedroom"],
+        temperature=22.0,
+    )
+    schedule[CONF_SCHEDULE_DEVICE_TRACKERS] = ["device_tracker.specific_user"]
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_CLIMATE_DEVICES: ["climate.bedroom"],
+        CONF_DEVICE_TRACKERS: ["device_tracker.user1"],  # Global shows home
+        CONF_SCHEDULES: [schedule],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    # Global presence shows home
+    assert result.anyone_home is True
+
+    # But schedule should use per-schedule tracker (not_home)
+    morning_decision = result.schedule_decisions["Morning"]
+    assert morning_decision.presence_ok is False  # Per-schedule tracker is not home
+    # Note: is_active can still be True - presence affects settings (away mode), not activation
+    # The schedule is active in the time window, but uses away settings
+    assert morning_decision.is_active is True  # Active in time window
+    assert morning_decision.hvac_mode == "off"  # But uses away/off mode since nobody home

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from homeassistant.const import STATE_HOME
+from homeassistant.const import STATE_HOME, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -331,10 +331,25 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
     def _is_tracker_home(self, entity_id: Optional[str]) -> bool:
         """Return True if the given tracker entity is in STATE_HOME."""
         if not entity_id:
+            _LOGGER.debug("Tracker entity_id is empty or None")
             return False
 
         state: Optional[State] = self.hass.states.get(entity_id)
-        return bool(state and state.state == STATE_HOME)
+        if not state:
+            _LOGGER.debug(
+                "Tracker %s has no state object (entity may not exist)", entity_id
+            )
+            return False
+
+        is_home = state.state == STATE_HOME
+        _LOGGER.debug(
+            "Tracker %s state='%s', STATE_HOME='%s', is_home=%s",
+            entity_id,
+            state.state,
+            STATE_HOME,
+            is_home,
+        )
+        return is_home
 
     def _evaluate_schedules(
         self,
@@ -391,13 +406,46 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
             # Per-schedule presence tracking
             schedule_trackers = schedule.get(CONF_SCHEDULE_DEVICE_TRACKERS, [])
-            if schedule_trackers:
-                # Schedule has specific trackers: check if any are home
+            # Filter out None, empty strings, and other falsy values
+            valid_schedule_trackers = [t for t in schedule_trackers if t]
+
+            # Fetch states ONCE to prevent race conditions
+            tracker_states: Dict[str, Optional[State]] = {
+                t: self.hass.states.get(t) for t in valid_schedule_trackers
+            }
+
+            # Filter to usable trackers (with valid, available states)
+            usable_tracker_states: Dict[str, State] = {}
+            for tracker, state in tracker_states.items():
+                if not state:
+                    continue
+                if state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+                    _LOGGER.debug(
+                        "Schedule '%s' tracker %s is %s, falling back to global presence",
+                        schedule_name,
+                        tracker,
+                        state.state,
+                    )
+                    continue
+                usable_tracker_states[tracker] = state
+
+            # Log warning if trackers were specified but all are invalid
+            if valid_schedule_trackers and not usable_tracker_states:
+                _LOGGER.warning(
+                    "Schedule '%s' has per-schedule trackers configured %s but none are usable. "
+                    "Falling back to global presence tracking.",
+                    schedule_name,
+                    valid_schedule_trackers,
+                )
+
+            if usable_tracker_states:
+                # Use the SAME state objects we already fetched (prevents race condition)
                 schedule_anyone_home = any(
-                    self._is_tracker_home(tracker) for tracker in schedule_trackers
+                    state.state == STATE_HOME
+                    for state in usable_tracker_states.values()
                 )
             else:
-                # No specific trackers: fall back to global presence
+                # No specific trackers or all invalid: fall back to global presence
                 schedule_anyone_home = anyone_home
 
             hvac_mode_home = str(
