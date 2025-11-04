@@ -637,10 +637,10 @@ class HeatingControlDashboardStrategy(Strategy):
 
         if decision.only_when_home:
             presence_status = "Home required"
-            if not decision.presence_ok and decision.enabled:
-                presence_status += " ❌"
-            else:
+            if decision.presence_ok:
                 presence_status += " ✓"
+            elif decision.enabled:
+                presence_status += " ❌"
             line1_parts.append(presence_status)
 
         if decision.schedule_device_trackers:

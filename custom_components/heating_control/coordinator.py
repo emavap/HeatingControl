@@ -285,6 +285,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         device_decisions = self._finalize_device_decisions(
             config,
             device_builders,
+            now_hm,
         )
 
         diagnostics = DiagnosticsSnapshot(
@@ -491,9 +492,12 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 device_builders.setdefault(device_entity, []).append(
                     {
                         "schedule_name": schedule_name,
+                        "schedule_id": schedule_id,
                         "order": index,
                         "start_minutes": start_value,
                         "start_age": start_age,
+                        "start_time": start_time,
+                        "end_time": end_time,
                         "hvac_mode": effective_hvac_mode,
                         "temperature": effective_temp,
                         "fan_mode": effective_fan,
@@ -506,6 +510,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         self,
         config,
         device_builders: Dict[str, List[Dict[str, Any]]],
+        now_hm: str,
     ) -> Dict[str, DeviceDecision]:
         """Create DeviceDecision objects for each configured device."""
         all_devices = config.get(CONF_CLIMATE_DEVICES, [])
@@ -515,7 +520,8 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             entries = device_builders.get(device_entity, [])
 
             hvac_mode, target_temp, target_fan, schedule_name = self._select_device_targets(
-                entries
+                entries,
+                now_hm,
             )
 
             should_be_active = hvac_mode not in (None, "off")
@@ -533,10 +539,45 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
     @staticmethod
     def _select_device_targets(
-        entries: List[Dict[str, Any]]
+        entries: List[Dict[str, Any]],
+        now_hm: str,
     ) -> Tuple[Optional[str], Optional[float], Optional[str], Optional[str]]:
-        """Select the hvac mode, temperature, and fan for a device."""
+        """Select the hvac mode, temperature, and fan for a device.
+
+        Selects the schedule with the most recent start time among those that:
+        1. Are currently in their time window (double-check to catch edge cases)
+        2. Have the highest "freshness" (most recently started)
+        3. Break ties by schedule order (higher order = later in config, wins)
+        """
         if not entries:
+            return None, None, None, None
+
+        # Filter to only schedules that are currently in their time window
+        # This is a safety check - entries should already be filtered, but this catches edge cases
+        valid_entries = []
+        for entry in entries:
+            start_time = entry.get("start_time", "00:00")
+            end_time = entry.get("end_time", "23:59")
+
+            # Check if current time is within this schedule's window
+            if HeatingControlCoordinator._is_time_in_schedule(now_hm, start_time, end_time):
+                valid_entries.append(entry)
+            else:
+                # Log when we filter out a schedule that shouldn't be in entries
+                _LOGGER.debug(
+                    "Filtered out schedule '%s' (not in time window: now=%s, window=%s-%s)",
+                    entry.get("schedule_name", "Unknown"),
+                    now_hm,
+                    start_time,
+                    end_time,
+                )
+
+        if not valid_entries:
+            # No schedules are actually in their time window
+            _LOGGER.debug(
+                "No valid schedules found for device (had %d entries, none in time window)",
+                len(entries),
+            )
             return None, None, None, None
 
         def entry_key(entry: Dict[str, Any]) -> Tuple[int, int]:
@@ -552,10 +593,20 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 entry.get("order", 0),
             )
 
-        best = max(entries, key=entry_key)
+        best = max(valid_entries, key=entry_key)
         mode = best.get("hvac_mode")
         temperature = best.get("temperature")
         fan_mode = best.get("fan_mode")
+
+        # Log the selection for debugging
+        if len(valid_entries) > 1:
+            _LOGGER.debug(
+                "Selected schedule '%s' from %d candidates (start_age=%d, order=%d)",
+                best.get("schedule_name", "Unknown"),
+                len(valid_entries),
+                best.get("start_age", 0),
+                best.get("order", 0),
+            )
 
         if mode in (None, "off"):
             return mode, None, None, best.get("schedule_name")
