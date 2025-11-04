@@ -267,6 +267,114 @@ This now matches the correct logic already present in lines 498-501 of the same 
 
 **Validation**: All 53 existing tests continue to pass.
 
+### Per-Schedule Tracker Presence Bug Fix (2025-01)
+
+**Issue**: Schedules showed "Home required ✖" indicator even when someone was home. Global presence sensors (binary_sensor.heating_control_everyone_away) showed correct state (Off = someone home), but schedule cards displayed incorrect presence indicators.
+
+**Root Cause**: The coordinator's per-schedule device tracker handling did not properly validate tracker entities before evaluating presence. When schedules had:
+- Invalid tracker entity IDs (deleted devices)
+- `None` or empty string values in the tracker list
+- Any combination of invalid trackers
+
+The system would attempt to evaluate them, receive `False` from all checks, and incorrectly determine nobody was home. This happened even when global device trackers correctly showed someone was home.
+
+**Fix Applied** (coordinator.py lines 407-424):
+
+Added two-stage filtering:
+1. **Filter falsy values**: Remove `None`, empty strings from tracker list
+2. **Validate entity existence**: Check if each tracker has a state object in Home Assistant
+3. **Fallback logic**: Only use per-schedule presence if valid trackers exist; otherwise fall back to global presence
+
+Changed from:
+```python
+schedule_trackers = schedule.get(CONF_SCHEDULE_DEVICE_TRACKERS, [])
+if schedule_trackers:
+    # Schedule has specific trackers: check if any are home
+    schedule_anyone_home = any(
+        self._is_tracker_home(tracker) for tracker in schedule_trackers
+    )
+else:
+    # No specific trackers: fall back to global presence
+    schedule_anyone_home = anyone_home
+```
+
+To:
+```python
+schedule_trackers = schedule.get(CONF_SCHEDULE_DEVICE_TRACKERS, [])
+# Filter out None, empty strings, and other falsy values
+valid_schedule_trackers = [t for t in schedule_trackers if t]
+
+# Check if any valid trackers actually exist (have state objects)
+trackers_with_states = [
+    t for t in valid_schedule_trackers if self.hass.states.get(t) is not None
+]
+
+if trackers_with_states:
+    # Schedule has specific trackers with valid states: check if any are home
+    schedule_anyone_home = any(
+        self._is_tracker_home(tracker) for tracker in trackers_with_states
+    )
+else:
+    # No specific trackers or all invalid: fall back to global presence
+    schedule_anyone_home = anyone_home
+```
+
+**Additional Changes** (coordinator.py lines 331-352):
+
+Enhanced `_is_tracker_home()` method with debug logging:
+- Logs when entity_id is empty or None
+- Logs when tracker entity doesn't exist in Home Assistant
+- Logs each tracker state comparison for debugging
+
+This helps diagnose future presence detection issues by checking Home Assistant logs.
+
+**Test Coverage** (test_calculate_heating_state.py):
+
+Added 4 comprehensive tests:
+- `test_schedule_with_invalid_per_schedule_trackers`: Tests `[None, ""]` values
+- `test_schedule_with_nonexistent_per_schedule_trackers`: Tests deleted entity IDs
+- `test_schedule_with_empty_per_schedule_trackers_list`: Tests empty `[]` fallback
+- `test_schedule_with_valid_per_schedule_trackers_not_home`: Tests proper override behavior
+
+**Validation**: All 61 tests pass (4 new tests added).
+
+**Impact**: Schedules with no valid per-schedule trackers now correctly use global presence detection, showing "Home required ✓" when someone is home based on global device trackers.
+
+### Dashboard Temperature History Feature (2025-01)
+
+**Feature**: Added 48-hour temperature history graph as the first section of the dashboard, showing both actual and target temperatures for all managed climate devices.
+
+**Implementation** (dashboard.py lines 221-266):
+
+New method `_build_temperature_history_card()` creates an ApexCharts card displaying:
+- **Actual temperature**: Current room temperature (always shown)
+- **Target temperature**: Desired setpoint (only shown when HVAC mode is heat/cool/heat_cool/auto)
+- **Time range**: 48 hours with 5-minute update interval
+- **Per-device series**: Separate lines for each climate entity
+
+The target temperature intelligently hides when devices are in modes where it's not relevant (off, fan_only, dry, etc.).
+
+**Requirements**: Requires [ApexCharts Card](https://github.com/RomRider/apexcharts-card) installed in Home Assistant (available via HACS). If not installed, dashboard shows error for history section only; all other features work normally.
+
+**Integration** (dashboard.py lines 94-107):
+- Added as first section on dashboard
+- Only displays when climate devices are configured
+- Heading: "Temperature History (48h)"
+
+**Dashboard Layout Changes**:
+- Removed forced single-column layout (`max_columns: 1`)
+- Reordered diagnostic cards: Device Status → Schedules (more logical hierarchy)
+- Dashboard now responsive: multi-column on wide screens, single-column on narrow
+
+**Test Coverage** (test_dashboard_strategy.py):
+
+Added/updated tests:
+- Updated all existing tests for new section ordering
+- Added validation for ApexCharts card structure
+- Added test for HVAC mode-based target temperature filtering
+
+**Validation**: All 61 tests pass.
+
 ## Code Patterns to Follow
 
 ### Error Handling in Config Flow

@@ -14,12 +14,28 @@ A custom Home Assistant integration that **automatically controls** climate devi
 
 ## Dashboard Overview
 
-The dynamic Lovelace strategy renders a **single-column dashboard** optimised for tablets and desktop touch panels:
+The dynamic Lovelace strategy renders a **responsive dashboard** optimised for tablets and desktop touch panels:
 
-- Section headings provide structure without forcing multi-column layouts.
-- Climate devices are shown as standard thermostat cards inside an adaptive grid.
-- Diagnostics are summarised in a markdown card with bullet points, avoiding the oversized icon tiles from earlier versions.
-- Schedule/device mappings, presence trackers, and a manual refresh button stay available for deeper troubleshooting while keeping the layout readable.
+- **Temperature History Graph** (first section): 48-hour chart showing actual vs target temperatures for all devices
+- Section headings provide structure with responsive multi-column layouts on wide screens
+- Climate devices are shown as standard thermostat cards inside an adaptive grid
+- Diagnostics are summarised with device status mappings and schedule cards
+- Schedule/device mappings, presence trackers, and a manual refresh button stay available for deeper troubleshooting
+
+### Dashboard Requirements
+
+The temperature history graph requires the **ApexCharts Card** custom component:
+
+**Installation via HACS:**
+1. Open HACS → Frontend
+2. Search for "ApexCharts Card"
+3. Install and restart Home Assistant
+
+**Manual Installation:**
+- Download from: https://github.com/RomRider/apexcharts-card
+- Follow the installation instructions in the ApexCharts repository
+
+If ApexCharts Card is not installed, the dashboard shows a helpful message in place of the temperature history section, while all other features continue to work normally.
 
 ## Directory Structure
 
@@ -380,8 +396,10 @@ Heating Control **automatically creates** a dashboard when you install the integ
 #### What's Included
 
 The auto-generated dashboard includes:
+- **Temperature History Graph**: 48-hour chart showing actual and target temperatures (requires ApexCharts Card)
 - **Thermostat Cards**: For every managed climate device
-- **Schedule Grid**: Toggle schedules on/off, see which are active
+- **Device Status Mapping**: Shows which schedule currently controls each device
+- **Schedule Cards**: Toggle schedules on/off, see which are active with presence indicators
 - **Live Status**: Real-time device states and diagnostics
 - **Refresh Button**: Manually trigger coordinator updates
 - **Auto-Updates**: Reflects changes when you modify schedules or devices
