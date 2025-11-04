@@ -333,6 +333,11 @@ class HeatingControlDashboardStrategy(Strategy):
                 "graph_span": "48h",
                 "update_interval": "5min",
                 "header": {"show": False},
+                "apex_config": {
+                    "stroke": {
+                        "curve": "smooth",
+                    },
+                },
                 "series": series,
             }
         ]
