@@ -187,10 +187,49 @@ class HeatingControlDashboardStrategy(Strategy):
         # Fallback to the first coordinator for this integration
         return next(iter(domain_data.values()), None)
 
-    @staticmethod
-    def _friendly_name(entity_id: str) -> str:
-        """Guess a human-friendly name from an entity id."""
+    def _friendly_name(self, entity_id: str) -> str:
+        """Return a Home Assistant friendly name for an entity id."""
+        if not entity_id:
+            return ""
+
+        hass_states = getattr(self.hass, "states", None)
+        if hass_states:
+            state = hass_states.get(entity_id)
+            if state:
+                friendly_name = state.attributes.get("friendly_name")
+                if isinstance(friendly_name, str) and friendly_name.strip():
+                    return friendly_name
+
+                state_name = getattr(state, "name", None)
+                if isinstance(state_name, str) and state_name.strip():
+                    return state_name
+
+        # Fallback to a slugified title when no friendly name is available
         return entity_id.split(".", 1)[-1].replace("_", " ").title()
+
+    def _schedule_display_name(self, snapshot, schedule_ref: Optional[str]) -> str:
+        """Return a friendly name for a schedule using snapshot data when possible."""
+        if not schedule_ref:
+            return ""
+
+        schedule_decisions = getattr(snapshot, "schedule_decisions", None)
+        if schedule_decisions:
+            # Direct lookup by schedule_id (mapping keys) or by stored name
+            decision = schedule_decisions.get(schedule_ref)
+            if decision:
+                decision_name = getattr(decision, "name", None)
+                if isinstance(decision_name, str) and decision_name.strip():
+                    return decision_name
+
+            for decision in schedule_decisions.values():
+                schedule_id = getattr(decision, "schedule_id", None)
+                decision_name = getattr(decision, "name", None)
+                if schedule_ref in (schedule_id, decision_name):
+                    if isinstance(decision_name, str) and decision_name.strip():
+                        return decision_name
+                    break
+
+        return schedule_ref
 
     def _build_device_cards(
         self, climate_entities: Sequence[str]
@@ -251,6 +290,7 @@ class HeatingControlDashboardStrategy(Strategy):
                             "attribute": "current_temperature",
                             "name": f"{device_name} Actual",
                             "type": "line",
+                            "stroke_width": 1,
                         }
                     )
                 except (ValueError, TypeError):
@@ -269,6 +309,7 @@ class HeatingControlDashboardStrategy(Strategy):
                             "attribute": "temperature",
                             "name": f"{device_name} Target",
                             "type": "line",
+                            "stroke_width": 1,
                         }
                     )
                 except (ValueError, TypeError):
@@ -392,7 +433,8 @@ class HeatingControlDashboardStrategy(Strategy):
                 )
             elif device_decision.active_schedules:
                 # Device has an active schedule
-                schedule_name = device_decision.active_schedules[0]
+                raw_schedule_name = device_decision.active_schedules[0]
+                schedule_name = self._schedule_display_name(snapshot, raw_schedule_name)
                 hvac_mode = device_decision.hvac_mode or "off"
                 target_temp = device_decision.target_temp
                 target_fan = device_decision.target_fan
