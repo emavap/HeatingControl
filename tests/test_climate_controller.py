@@ -194,3 +194,65 @@ async def test_no_action_when_hvac_mode_missing(dummy_hass: DummyHass, no_sleep)
     ])
 
     assert dummy_hass.services.calls == []
+
+
+@pytest.mark.asyncio
+async def test_fan_only_mode_skips_temperature(dummy_hass: DummyHass, no_sleep):
+    dummy_hass.states.set(
+        "climate.vent",
+        DummyState("off", {"fan_modes": ["auto", "high"]}),
+    )
+    controller = make_controller(dummy_hass)
+
+    await controller.async_apply(
+        [
+            DeviceDecision(
+                entity_id="climate.vent",
+                should_be_active=True,
+                active_schedules=("Test",),
+                hvac_mode="fan_only",
+                target_temp=None,
+                target_fan="high",
+            )
+        ]
+    )
+
+    services = dummy_hass.services.calls
+    assert any(
+        call["service"] == "set_hvac_mode" and call["data"]["hvac_mode"] == "fan_only"
+        for call in services
+    )
+    assert not any(call["service"] == "set_temperature" for call in services)
+    assert any(
+        call["service"] == "set_fan_mode" and call["data"]["fan_mode"] == "high"
+        for call in services
+    )
+
+
+@pytest.mark.asyncio
+async def test_dry_mode_skips_temperature(dummy_hass: DummyHass, no_sleep):
+    dummy_hass.states.set(
+        "climate.dehumidifier",
+        DummyState("cool", {}),
+    )
+    controller = make_controller(dummy_hass)
+
+    await controller.async_apply(
+        [
+            DeviceDecision(
+                entity_id="climate.dehumidifier",
+                should_be_active=True,
+                active_schedules=("Test",),
+                hvac_mode="dry",
+                target_temp=None,
+                target_fan=None,
+            )
+        ]
+    )
+
+    services = dummy_hass.services.calls
+    assert any(
+        call["service"] == "set_hvac_mode" and call["data"]["hvac_mode"] == "dry"
+        for call in services
+    )
+    assert not any(call["service"] == "set_temperature" for call in services)

@@ -213,6 +213,44 @@ def test_cool_schedule_sets_cooling_mode(monkeypatch, dummy_hass: DummyHass):
     assert decision.target_temp == 24.0
 
 
+def test_fan_only_schedule_clears_temperature(monkeypatch, dummy_hass: DummyHass):
+    freeze_time(monkeypatch, 10, 0)
+    dummy_hass.states.set("device_tracker.user1", DummyState("home", {}))
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_DEVICE_TRACKERS: ["device_tracker.user1"],
+        CONF_CLIMATE_DEVICES: ["climate.fan_unit"],
+        CONF_SCHEDULES: [
+            base_schedule(
+                "Ventilation",
+                "09:00",
+                "12:00",
+                hvac_mode="fan_only",
+                away_hvac_mode="dry",
+                away_temperature=17.0,
+                devices=["climate.fan_unit"],
+                temperature=22.0,
+                fan_mode="high",
+            )
+        ],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    schedule = result.schedule_decisions["Ventilation"]
+    assert schedule.hvac_mode == "fan_only"
+    assert schedule.target_temp is None
+    assert schedule.target_temp_home is None
+    assert schedule.target_temp_away is None
+
+    decision = result.device_decisions["climate.fan_unit"]
+    assert decision.hvac_mode == "fan_only"
+    assert decision.target_temp is None
+    assert decision.target_fan == "high"
+
+
 def test_blank_tracker_entries_are_ignored(monkeypatch, dummy_hass: DummyHass):
     freeze_time(monkeypatch, 7, 30)
     dummy_hass.states.set("device_tracker.user1", DummyState("home", {}))

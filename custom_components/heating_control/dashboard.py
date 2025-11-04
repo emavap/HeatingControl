@@ -80,29 +80,28 @@ class HeatingControlDashboardStrategy(Strategy):
         )
         snapshot = coordinator.data
 
-        device_cards = self._build_device_cards(climate_entities)
         tracker_entities: Sequence[str] = self._get_config_list(
             coordinator, CONF_DEVICE_TRACKERS
         )
 
-        status_cards = self._build_status_cards(
-            entry_id, snapshot, climate_entities, tracker_entities
+        device_cards = self._build_device_cards(climate_entities)
+        overview_cards = self._build_overview_cards(tracker_entities)
+        device_status_cards = self._build_device_status_cards(
+            snapshot, climate_entities
         )
-
+        schedule_cards = self._build_schedule_cards(entry_id, snapshot)
         sections: List[Dict[str, Any]] = []
 
-        # Add temperature history graph as the first section
-        history_card = self._build_temperature_history_card(climate_entities)
-        if history_card:
+        history_cards = self._build_temperature_history_card(climate_entities)
+        if history_cards:
             sections.append(
                 {
                     "type": "grid",
                     "columns": 1,
                     "square": False,
-                    "cards": self._wrap_with_heading(
-                        "Temperature History (48h)",
-                        history_card,
-                    ),
+                    "column_span": 3,
+                    "title": "Temperature History (48h)",
+                    "cards": history_cards,
                 }
             )
 
@@ -111,39 +110,57 @@ class HeatingControlDashboardStrategy(Strategy):
                 "type": "grid",
                 "columns": 1,
                 "square": False,
-                "cards": self._wrap_with_heading(
-                    "Aircos & Thermostats",
-                    device_cards
-                    or [
-                        {
-                            "type": "markdown",
-                            "content": "No climate devices are configured for Heating Control.",
-                        }
-                    ],
-                ),
+                "title": "Aircos & Thermostats",
+                "cards": device_cards
+                or [
+                    {
+                        "type": "markdown",
+                        "content": "No climate devices are configured for Heating Control.",
+                    }
+                ],
             }
         )
 
         sections.append(
             {
                 "type": "grid",
-                "columns": 1,
+                "columns": 2,
                 "square": False,
-                "cards": self._wrap_with_heading(
-                    "Smart Heating — Diagnostics",
-                    status_cards
-                    or [
-                        {
-                            "type": "markdown",
-                            "content": (
-                                "Coordinator data not available yet. The view will populate after the "
-                                "next update cycle."
-                            ),
-                        }
-                    ],
-                ),
+                "title": "Smart Heating — Diagnostics",
+                "cards": overview_cards
+                or [
+                    {
+                        "type": "markdown",
+                        "content": (
+                            "Coordinator data not available yet. The view will populate after the "
+                            "next update cycle."
+                        ),
+                    }
+                ],
             }
         )
+
+        if device_status_cards:
+            sections.append(
+                {
+                    "type": "grid",
+                    "columns": min(max(len(device_status_cards), 1), 2),
+                    "square": False,
+                    "title": "Device → Schedule Mapping",
+                    "cards": device_status_cards,
+                }
+            )
+
+        if schedule_cards:
+            sections.append(
+                {
+                    "type": "grid",
+                    "columns": min(max(len(schedule_cards), 1), 2),
+                    "square": False,
+                    "title": "Schedules",
+                    "cards": schedule_cards,
+                }
+            )
 
         return {
             "title": "Smart Heating",
@@ -169,22 +186,6 @@ class HeatingControlDashboardStrategy(Strategy):
 
         # Fallback to the first coordinator for this integration
         return next(iter(domain_data.values()), None)
-
-    @staticmethod
-    def _wrap_with_heading(
-        heading: str, cards: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Attach a heading card before the provided cards."""
-        if not cards:
-            return cards
-
-        return [
-            {
-                "type": "heading",
-                "heading": heading,
-            },
-            *cards,
-        ]
 
     @staticmethod
     def _friendly_name(entity_id: str) -> str:
@@ -224,17 +225,6 @@ class HeatingControlDashboardStrategy(Strategy):
         """Create a history graph showing target and actual temperatures for all devices."""
         if not climate_entities:
             return []
-
-        if not self._apexcharts_available():
-            return [
-                {
-                    "type": "markdown",
-                    "content": (
-                        "Install the [ApexCharts Card](https://github.com/RomRider/apexcharts-card) "
-                        "to view temperature history."
-                    ),
-                }
-            ]
 
         series: List[Dict[str, Any]] = []
 
@@ -306,64 +296,11 @@ class HeatingControlDashboardStrategy(Strategy):
             }
         ]
 
-    def _apexcharts_available(self) -> bool:
-        """Return True if the ApexCharts custom card appears to be installed."""
-        try:
-            from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL
-        except ImportError:  # pragma: no cover - frontend always present in HA
-            return False
-
-        resource_sources: List[List[str]] = []
-
-        # Check frontend resources (Bug #8 fix: wrap in try/except)
-        try:
-            frontend_resources = self.hass.data.get(DATA_EXTRA_MODULE_URL)
-            if frontend_resources:
-                if isinstance(frontend_resources, dict):
-                    for value in frontend_resources.values():
-                        if isinstance(value, (list, tuple, set)):
-                            resource_sources.append(list(value))
-                elif isinstance(frontend_resources, (list, tuple, set)):
-                    resource_sources.append(list(frontend_resources))
-        except (AttributeError, TypeError, KeyError):
-            pass  # Frontend data structure changed or unavailable
-
-        # Check Lovelace storage resources (Bug #3 & #8 fix: use list instead of generator)
-        try:
-            lovelace_data = self.hass.data.get("lovelace")
-            if isinstance(lovelace_data, dict):
-                storage_resources = lovelace_data.get("resources")
-                if storage_resources and isinstance(storage_resources, (list, tuple)):
-                    # Use list comprehension instead of generator to prevent exhaustion
-                    resource_sources.append(
-                        [resource.get("url") for resource in storage_resources if resource]
-                    )
-        except (AttributeError, TypeError, KeyError):
-            pass  # Lovelace data structure changed or unavailable
-
-        # Check all resource URLs (Bug #5 & #6 fix: better matching + exception handling)
-        for source in resource_sources:
-            if source:
-                for url in source:
-                    try:
-                        # Bug #5 fix: More specific URL matching
-                        # Bug #9 fix: Unicode-safe with .lower()
-                        url_str = str(url).lower() if url else ""
-                        if "apexcharts-card.js" in url_str or "/apexcharts-card/" in url_str:
-                            return True
-                    except (TypeError, ValueError, AttributeError):
-                        # Bug #6 fix: Handle str() conversion failures
-                        continue
-        return False
-
-    def _build_status_cards(
+    def _build_overview_cards(
         self,
-        entry_id: str,
-        snapshot,
-        climate_entities: Sequence[str],
         tracker_entities: Sequence[str],
     ) -> List[Dict[str, Any]]:
-        """Create entities/tile cards summarising integration status."""
+        """Create high-level diagnostic entities and controls."""
         cards: List[Dict[str, Any]] = []
 
         status_entities = [
@@ -384,28 +321,6 @@ class HeatingControlDashboardStrategy(Strategy):
                 "entities": status_entities,
             }
         )
-
-        if snapshot:
-            # Create device status cards showing which schedule controls each device
-            device_status_cards = self._build_device_status_cards(
-                snapshot, climate_entities
-            )
-            if device_status_cards:
-                cards.extend(
-                    self._wrap_with_heading(
-                        "Device → Schedule Mapping",
-                        device_status_cards,
-                    )
-                )
-
-            schedule_cards = self._build_schedule_cards(entry_id, snapshot)
-            if schedule_cards:
-                cards.extend(
-                    self._wrap_with_heading(
-                        "Schedules",
-                        schedule_cards,
-                    )
-                )
 
         if tracker_entities:
             cards.append(
@@ -892,8 +807,11 @@ class HeatingControlDashboardStrategy(Strategy):
     def _get_config_list(coordinator, key: str) -> Sequence[str]:
         """Return a list configuration value (options preferred over data)."""
         options = coordinator.config_entry.options
+        if key in options:
+            value = options.get(key)
+            return value if value is not None else []
         data = coordinator.config_entry.data
-        return options.get(key) or data.get(key, [])
+        return data.get(key, [])
 
     @staticmethod
     def _get_config_value(coordinator, key: str) -> Optional[str]:

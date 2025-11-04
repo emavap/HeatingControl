@@ -125,9 +125,10 @@ async def test_strategy_does_not_force_single_column_layout() -> None:
     assert "max_columns" not in view
 
     history_section = view["sections"][0]
-    history_heading, history_card = history_section["cards"]
-    assert history_heading["type"] == "heading"
-    assert history_heading["heading"] == "Temperature History (48h)"
+    assert history_section["title"] == "Temperature History (48h)"
+    assert history_section["columns"] == 1
+    assert history_section.get("column_span") == 3
+    history_card = history_section["cards"][0]
     assert history_card["type"] == "custom:apexcharts-card"
     assert history_card["graph_span"] == "48h"
     assert history_card["update_interval"] == "5min"
@@ -141,40 +142,24 @@ async def test_strategy_does_not_force_single_column_layout() -> None:
     assert history_series[1]["attribute"] == "temperature"
     assert "Target" in history_series[1]["name"]
 
-    # First section is temperature history, second is airco
     airco_section = view["sections"][1]
     assert airco_section["type"] == "grid"
     assert airco_section["columns"] == 1
-    assert airco_section["square"] is False
-
-    thermostat_grid = airco_section["cards"][1]
+    assert airco_section["title"] == "Aircos & Thermostats"
+    thermostat_grid = airco_section["cards"][0]
     assert thermostat_grid["type"] == "grid"
     assert thermostat_grid["columns"] == 1
 
     diagnostics_section = view["sections"][2]
-    heading_card, status_card, *rest = diagnostics_section["cards"]
-    assert heading_card["type"] == "heading"
-    assert status_card["type"] == "entities"
-    assert not any(
-        "Schedules:" in card.get("content", "")
-        for card in rest
-        if card.get("type") == "markdown"
-    )
-    assert not any(
-        "Devices:" in card.get("content", "")
-        for card in rest
-        if card.get("type") == "markdown"
-    )
-    assert not any(
-        "Presence:" in card.get("content", "")
-        for card in rest
-        if card.get("type") == "markdown"
-    )
+    assert diagnostics_section["title"] == "Smart Heating — Diagnostics"
+    cards = diagnostics_section["cards"]
+    assert cards[0]["type"] == "entities"
+    assert any(card["type"] == "button" for card in cards)
 
 
 @pytest.mark.asyncio
-async def test_temperature_history_shows_message_when_apex_missing() -> None:
-    """A helpful message should be shown if ApexCharts is not installed."""
+async def test_temperature_history_renders_without_apex_metadata() -> None:
+    """Graph card should render even when ApexCharts resources are not detected."""
     config_entry = DummyConfigEntry(
         "entry-one",
         options={
@@ -192,10 +177,9 @@ async def test_temperature_history_shows_message_when_apex_missing() -> None:
     result = await strategy.async_generate()
 
     history_section = result["views"][0]["sections"][0]
-    heading_card, message_card = history_section["cards"]
-    assert heading_card["type"] == "heading"
-    assert message_card["type"] == "markdown"
-    assert "ApexCharts Card" in message_card["content"]
+    assert history_section["title"] == "Temperature History (48h)"
+    chart_card = history_section["cards"][0]
+    assert chart_card["type"] == "custom:apexcharts-card"
 
 
 @pytest.mark.asyncio
@@ -218,8 +202,7 @@ async def test_temperature_history_waits_for_device_attributes() -> None:
     result = await strategy.async_generate()
 
     history_section = result["views"][0]["sections"][0]
-    heading_card, message_card = history_section["cards"]
-    assert heading_card["type"] == "heading"
+    message_card = history_section["cards"][0]
     assert message_card["type"] == "markdown"
     assert "Temperature history will appear" in message_card["content"]
 
@@ -260,7 +243,7 @@ async def test_device_section_uses_multiple_columns_when_multiple_devices() -> N
     result = await strategy.async_generate()
 
     history_section = result["views"][0]["sections"][0]
-    history_card = history_section["cards"][1]
+    history_card = history_section["cards"][0]
     assert history_card["type"] == "custom:apexcharts-card"
     series = history_card["series"]
     assert len(series) == 6  # 3 devices * (actual + target)
@@ -276,7 +259,7 @@ async def test_device_section_uses_multiple_columns_when_multiple_devices() -> N
 
     # First section is temperature history, second is airco
     airco_section = result["views"][0]["sections"][1]
-    thermostat_grid = airco_section["cards"][1]
+    thermostat_grid = airco_section["cards"][0]
     assert thermostat_grid["type"] == "grid"
     assert thermostat_grid["columns"] > 1
 
@@ -358,20 +341,13 @@ async def test_device_cards_precede_schedule_cards_in_diagnostics_section() -> N
 
     result = await strategy.async_generate()
 
-    # First section is temperature history, second is diagnostics
-    diagnostics_cards = result["views"][0]["sections"][2]["cards"]
-    device_heading_index = next(
-        index
-        for index, card in enumerate(diagnostics_cards)
-        if card.get("type") == "heading" and card.get("heading") == "Device → Schedule Mapping"
-    )
-    schedule_heading_index = next(
-        index
-        for index, card in enumerate(diagnostics_cards)
-        if card.get("type") == "heading" and card.get("heading") == "Schedules"
-    )
+    section_titles = [
+        section.get("title") for section in result["views"][0]["sections"]
+    ]
+    device_index = section_titles.index("Device → Schedule Mapping")
+    schedule_index = section_titles.index("Schedules")
 
-    assert device_heading_index < schedule_heading_index
+    assert device_index < schedule_index
 
 
 @pytest.mark.asyncio
@@ -389,6 +365,43 @@ async def test_strategy_handles_missing_integration() -> None:
     message_card = view["sections"][0]["cards"][0]
     assert message_card["type"] == "markdown"
     assert "integration is not loaded" in message_card["content"]
+
+
+@pytest.mark.asyncio
+async def test_empty_option_lists_override_data() -> None:
+    """Options with empty lists should override config entry data."""
+    config_entry = DummyConfigEntry(
+        "entry-clean",
+        data={
+            CONF_CLIMATE_DEVICES: ["climate.living_room"],
+            CONF_DEVICE_TRACKERS: ["device_tracker.person"],
+        },
+        options={
+            CONF_CLIMATE_DEVICES: [],
+            CONF_DEVICE_TRACKERS: [],
+        },
+    )
+    coordinator = DummyCoordinator(config_entry, _build_snapshot())
+    hass = _build_hass({"entry-clean": coordinator})
+    strategy = HeatingControlDashboardStrategy(hass, {"entry_id": "entry-clean"})
+
+    result = await strategy.async_generate()
+
+    view = result["views"][0]
+    sections = view["sections"]
+    assert len(sections) == 2
+
+    airco_section = sections[0]
+    assert airco_section["title"] == "Aircos & Thermostats"
+    message_card = airco_section["cards"][0]
+    assert message_card["type"] == "markdown"
+    assert "No climate devices" in message_card["content"]
+
+    diagnostics_cards = sections[1]["cards"]
+    assert not any(
+        isinstance(card, dict) and card.get("title") == "Presence trackers"
+        for card in diagnostics_cards
+    )
 
 
 @pytest.mark.asyncio
@@ -418,14 +431,9 @@ async def test_temperature_history_card_appears_first() -> None:
     # First section should be temperature history
     history_section = sections[0]
     assert history_section["type"] == "grid"
+    assert history_section["title"] == "Temperature History (48h)"
 
-    # Check for heading
-    heading_card = history_section["cards"][0]
-    assert heading_card["type"] == "heading"
-    assert heading_card["heading"] == "Temperature History (48h)"
-
-    # Check for apexcharts card
-    history_card = history_section["cards"][1]
+    history_card = history_section["cards"][0]
     assert history_card["type"] == "custom:apexcharts-card"
     assert history_card["graph_span"] == "48h"
     assert history_card["update_interval"] == "5min"
@@ -465,9 +473,9 @@ async def test_temperature_history_card_not_shown_when_no_devices() -> None:
 
     # First section should be "Aircos & Thermostats" since there's no history card
     first_section = sections[0]
-    heading_card = first_section["cards"][0]
-    assert heading_card["type"] == "heading"
-    assert heading_card["heading"] == "Aircos & Thermostats"
+    assert first_section["title"] == "Aircos & Thermostats"
+    fallback_card = first_section["cards"][0]
+    assert fallback_card["type"] == "markdown"
 
 
 @pytest.mark.asyncio
@@ -498,7 +506,7 @@ async def test_temperature_history_excludes_target_when_hvac_off() -> None:
 
     view = result["views"][0]
     history_section = view["sections"][0]
-    history_card = history_section["cards"][1]
+    history_card = history_section["cards"][0]
     assert history_card["type"] == "custom:apexcharts-card"
 
     series = history_card["series"]

@@ -46,6 +46,15 @@ _LOGGER = logging.getLogger(__name__)
 
 MINUTES_PER_DAY = 24 * 60
 
+HVAC_MODES_WITH_TEMPERATURE = {"heat", "cool", "heat_cool", "auto"}
+
+
+def _mode_supports_temperature(mode: Optional[str]) -> bool:
+    """Return True if the HVAC mode typically exposes a temperature target."""
+    if mode is None:
+        return False
+    return mode in HVAC_MODES_WITH_TEMPERATURE
+
 
 class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
     """Class to manage fetching heating control data."""
@@ -506,6 +515,9 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             if effective_hvac_mode in (None, "off"):
                 effective_temp = None
                 effective_fan = None
+            elif not _mode_supports_temperature(effective_hvac_mode):
+                effective_temp = None
+                effective_fan = schedule_fan
             else:
                 effective_fan = schedule_fan
 
@@ -526,9 +538,15 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 devices=tuple(device_entities),
                 schedule_device_trackers=tuple(schedule_trackers),
                 target_temp=effective_temp,
-                target_temp_home=schedule_temp_home if hvac_mode_home != "off" else None,
+                target_temp_home=(
+                    schedule_temp_home
+                    if _mode_supports_temperature(hvac_mode_home)
+                    else None
+                ),
                 target_temp_away=(
-                    schedule_temp_away if hvac_mode_away and hvac_mode_away != "off" else None
+                    schedule_temp_away
+                    if hvac_mode_away and _mode_supports_temperature(hvac_mode_away)
+                    else None
                 ),
                 target_fan=effective_fan,
             )
