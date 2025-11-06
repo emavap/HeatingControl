@@ -89,6 +89,9 @@ class DiagnosticsSnapshot:
     schedule_count: int
     active_schedules: int
     active_devices: int
+    last_update_duration: Optional[float] = None
+    timed_out_devices: Tuple[str, ...] = tuple()
+    watchdog_status: str = "healthy"
 
     def as_dict(self) -> Dict[str, object]:
         """Return a dictionary representation used by diagnostics sensors."""
@@ -101,6 +104,9 @@ class DiagnosticsSnapshot:
             "schedule_count": self.schedule_count,
             "active_schedules": self.active_schedules,
             "active_devices": self.active_devices,
+            "last_update_duration": self.last_update_duration,
+            "timed_out_devices": list(self.timed_out_devices),
+            "watchdog_status": self.watchdog_status,
         }
 
 

@@ -21,8 +21,8 @@ set_schedule_enabled:
       example: Morning routine
       selector:
         text:
-    schedule_enabled:
-      name: Schedule enabled
+    enabled:
+      name: Enabled
       description: >
         Set to true to enable the schedule, or false to disable it.
       required: true

@@ -35,6 +35,14 @@ DEFAULT_SCHEDULE_AWAY_HVAC_MODE = "off"
 DEFAULT_SETTLE_SECONDS = 5
 DEFAULT_FINAL_SETTLE = 2
 
+# Timeout values (seconds)
+SERVICE_CALL_TIMEOUT = 30  # Maximum time for a single climate service call
+UPDATE_CYCLE_TIMEOUT = 50  # Baseline expected max runtime for a control cycle (used for watchdog diagnostics)
+WATCHDOG_STUCK_THRESHOLD = 180  # Time after which we consider the integration stuck
+
+# Temperature comparison epsilon (°C)
+TEMPERATURE_EPSILON = 0.1  # Minimum temperature change to trigger update (accommodates 0.5°C increment devices)
+
 # Sensor types
 BINARY_SENSOR_EVERYONE_AWAY = "everyone_away"
 

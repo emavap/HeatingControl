@@ -261,7 +261,7 @@ class HeatingControlDashboardStrategy(Strategy):
     def _build_temperature_history_card(
         self, climate_entities: Sequence[str]
     ) -> List[Dict[str, Any]]:
-        """Create a history graph showing target and actual temperatures for all devices."""
+        """Create a history graph showing target temperatures for all devices."""
         if not climate_entities:
             return []
 
@@ -277,25 +277,7 @@ class HeatingControlDashboardStrategy(Strategy):
             attributes = dict(state.attributes) if state.attributes else {}
 
             device_name = self._friendly_name(climate_entity)
-            current_temperature = attributes.get("current_temperature")
             target_temperature = attributes.get("temperature")
-
-            # Validate that temperatures are numeric (Bug #4 fix)
-            if current_temperature is not None:
-                try:
-                    float(current_temperature)  # Validate it's numeric
-                    series.append(
-                        {
-                            "entity": climate_entity,
-                            "attribute": "current_temperature",
-                            "name": f"{device_name} Actual",
-                            "type": "line",
-                            "stroke_width": 1,
-                        }
-                    )
-                except (ValueError, TypeError):
-                    # Skip non-numeric temperatures
-                    pass
 
             if (
                 target_temperature is not None
@@ -314,7 +296,11 @@ class HeatingControlDashboardStrategy(Strategy):
                     )
                 except (ValueError, TypeError):
                     # Skip non-numeric temperatures
-                    pass
+                    _LOGGER.debug(
+                        "Skipping temperature series for %s - non-numeric value: %s",
+                        climate_entity,
+                        target_temperature,
+                    )
 
         if not series:
             return [
@@ -322,7 +308,7 @@ class HeatingControlDashboardStrategy(Strategy):
                     "type": "markdown",
                     "content": (
                         "Temperature history will appear once devices report "
-                        "current and target temperatures."
+                        "target temperatures."
                     ),
                 }
             ]
@@ -335,7 +321,7 @@ class HeatingControlDashboardStrategy(Strategy):
                 "header": {"show": False},
                 "apex_config": {
                     "stroke": {
-                        "curve": "smooth",
+                        "curve": "straight",
                     },
                 },
                 "series": series,

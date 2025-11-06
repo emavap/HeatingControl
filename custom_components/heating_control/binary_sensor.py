@@ -1,6 +1,8 @@
 """Binary sensor platform for heating_control."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorDeviceClass,
@@ -148,7 +150,7 @@ class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
         return bool(schedule and schedule.is_active)
 
     @property
-    def extra_state_attributes(self) -> dict[str, any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
         snapshot = self.coordinator.data
         schedule = snapshot.schedule_decisions.get(self._schedule_id) if snapshot else None
@@ -222,7 +224,7 @@ class DeviceActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
         return bool(device and device.should_be_active)
 
     @property
-    def extra_state_attributes(self) -> dict[str, any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return additional attributes."""
         snapshot = self.coordinator.data
         device = snapshot.device_decisions.get(self._device_entity) if snapshot else None

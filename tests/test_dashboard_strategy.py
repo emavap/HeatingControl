@@ -134,13 +134,10 @@ async def test_strategy_does_not_force_single_column_layout() -> None:
     assert history_card["update_interval"] == "5min"
     assert history_card["header"]["show"] is False
     history_series = history_card["series"]
-    assert len(history_series) == 2
+    assert len(history_series) == 1
     assert history_series[0]["entity"] == "climate.living_room"
-    assert history_series[0]["attribute"] == "current_temperature"
-    assert "Actual" in history_series[0]["name"]
-    assert history_series[1]["entity"] == "climate.living_room"
-    assert history_series[1]["attribute"] == "temperature"
-    assert "Target" in history_series[1]["name"]
+    assert history_series[0]["attribute"] == "temperature"
+    assert "Target" in history_series[0]["name"]
 
     airco_section = view["sections"][1]
     assert airco_section["type"] == "grid"
@@ -246,16 +243,14 @@ async def test_device_section_uses_multiple_columns_when_multiple_devices() -> N
     history_card = history_section["cards"][0]
     assert history_card["type"] == "custom:apexcharts-card"
     series = history_card["series"]
-    assert len(series) == 6  # 3 devices * (actual + target)
+    assert len(series) == 3  # 3 devices * 1 target series
     expected_pairs = [
-        ("climate.bedroom", "current_temperature"),
         ("climate.bedroom", "temperature"),
-        ("climate.office", "current_temperature"),
         ("climate.office", "temperature"),
-        ("climate.kitchen", "current_temperature"),
         ("climate.kitchen", "temperature"),
     ]
     assert [(entry["entity"], entry["attribute"]) for entry in series] == expected_pairs
+    assert all("Target" in entry["name"] for entry in series)
 
     # First section is temperature history, second is airco
     airco_section = result["views"][0]["sections"][1]
@@ -438,18 +433,16 @@ async def test_temperature_history_card_appears_first() -> None:
     assert history_card["graph_span"] == "48h"
     assert history_card["update_interval"] == "5min"
 
-    # Verify series include both actual and target temperatures for each device
+    # Verify series include target temperatures for each device
     series = history_card["series"]
-    assert len(series) == 4  # 2 devices * 2 series each
+    assert len(series) == 2  # 2 devices * 1 series each
     expected_pairs = [
-        ("climate.bedroom", "current_temperature"),
         ("climate.bedroom", "temperature"),
-        ("climate.living_room", "current_temperature"),
         ("climate.living_room", "temperature"),
     ]
     assert [(entry["entity"], entry["attribute"]) for entry in series] == expected_pairs
     names = [entry["name"] for entry in series]
-    assert all("Actual" in name or "Target" in name for name in names)
+    assert all("Target" in name for name in names)
 
 
 @pytest.mark.asyncio
@@ -511,34 +504,25 @@ async def test_temperature_history_excludes_target_when_hvac_off() -> None:
 
     series = history_card["series"]
     expected_pairs = [
-        ("climate.bedroom", "current_temperature"),
         ("climate.bedroom", "temperature"),
-        ("climate.living_room", "current_temperature"),
-        ("climate.kitchen", "current_temperature"),
         ("climate.kitchen", "temperature"),
     ]
 
-    # Should have 3 actual temp series + 2 target temp series (bedroom and kitchen only)
-    assert len(series) == 5
+    # Should only have target temperature series when HVAC is active
+    assert len(series) == 2
     assert sorted((entry["entity"], entry["attribute"]) for entry in series) == sorted(
         expected_pairs
     )
 
-    # Check bedroom: should have both actual and target
+    # Check bedroom: should have target series
     bedroom_series = [entry for entry in series if "bedroom" in entry["name"].lower()]
-    assert len(bedroom_series) == 2
-    assert any("Actual" in entry["name"] for entry in bedroom_series)
-    assert any("Target" in entry["name"] for entry in bedroom_series)
+    assert len(bedroom_series) == 1
+    assert "Target" in bedroom_series[0]["name"]
 
-    # Check living_room: should have only actual (no target because it's off)
-    living_room_series = [
-        entry for entry in series if "living room" in entry["name"].lower()
-    ]
-    assert len(living_room_series) == 1
-    assert "Actual" in living_room_series[0]["name"]
+    # Check living_room: should have no series (HVAC off)
+    assert not any("living room" in entry["name"].lower() for entry in series)
 
-    # Check kitchen: should have both actual and target (auto mode)
+    # Check kitchen: should have target series (auto mode)
     kitchen_series = [entry for entry in series if "kitchen" in entry["name"].lower()]
-    assert len(kitchen_series) == 2
-    assert any("Actual" in entry["name"] for entry in kitchen_series)
-    assert any("Target" in entry["name"] for entry in kitchen_series)
+    assert len(kitchen_series) == 1
+    assert "Target" in kitchen_series[0]["name"]

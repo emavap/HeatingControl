@@ -1,6 +1,8 @@
 """Sensor platform for heating_control."""
 from __future__ import annotations
 
+from typing import Any
+
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -89,7 +91,7 @@ class DecisionDiagnosticsSensor(HeatingControlSensor):
         return f"{active_schedules}/{schedule_count} schedules active"
 
     @property
-    def extra_state_attributes(self) -> dict[str, any]:
+    def extra_state_attributes(self) -> dict[str, Any]:
         """Return the diagnostics as attributes."""
         snapshot = self.coordinator.data
         if not snapshot:

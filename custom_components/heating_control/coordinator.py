@@ -4,6 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime, timedelta
 import logging
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from homeassistant.const import STATE_HOME, STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -37,7 +38,9 @@ from .const import (
     DEFAULT_SCHEDULE_TEMPERATURE,
     DEFAULT_SETTLE_SECONDS,
     DOMAIN,
+    UPDATE_CYCLE_TIMEOUT,
     UPDATE_INTERVAL,
+    WATCHDOG_STUCK_THRESHOLD,
 )
 from .controller import ClimateController
 from .models import DeviceDecision, DiagnosticsSnapshot, HeatingStateSnapshot, ScheduleDecision
@@ -73,6 +76,12 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         self._previous_presence_state: Optional[bool] = None
         self._force_update = False
 
+        # Watchdog state tracking
+        self._last_update_start: Optional[float] = None
+        self._last_update_complete: Optional[float] = None
+        self._last_update_duration: Optional[float] = None
+        self._timed_out_devices: List[str] = []
+
         super().__init__(
             hass,
             _LOGGER,
@@ -81,26 +90,92 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         )
 
     async def _async_update_data(self) -> HeatingStateSnapshot:
-        """Update data and apply control decisions."""
-        try:
-            snapshot = await self.hass.async_add_executor_job(
-                self._calculate_heating_state
-            )
+        """Update data and apply control decisions with watchdog protection.
 
-            should_apply_control = self._detect_state_transitions(snapshot)
+        NOTE: Timing variables (_last_update_start, _last_update_complete, _last_update_duration)
+        are accessed without locks because DataUpdateCoordinator guarantees serial execution
+        of update cycles. Only one instance of this method runs at a time.
+        """
+        start_time = time.time()
+        self._last_update_start = start_time
 
-            if should_apply_control:
-                _LOGGER.info("State transition detected, applying control decisions")
-                await self._controller.async_apply(snapshot.device_decisions.values())
-            else:
-                _LOGGER.debug(
-                    "No state transitions, skipping control application (preserving manual changes)"
+        # Check if previous update is stuck
+        if self._last_update_complete:
+            time_since_complete = start_time - self._last_update_complete
+            if time_since_complete > WATCHDOG_STUCK_THRESHOLD:
+                _LOGGER.warning(
+                    "Integration may be stuck - last update completed %.1fs ago (threshold: %ds)",
+                    time_since_complete,
+                    WATCHDOG_STUCK_THRESHOLD,
                 )
 
-            self._update_previous_states(snapshot)
+        try:
+            snapshot = await self._async_update_data_internal()
+
+            # Update timing
+            end_time = time.time()
+            self._last_update_complete = end_time
+            self._last_update_duration = end_time - start_time
+
+            _LOGGER.debug(
+                "Update cycle completed in %.2fs", self._last_update_duration
+            )
+
             return snapshot
+
         except Exception as err:
+            end_time = time.time()
+            self._last_update_complete = end_time
+            self._last_update_duration = end_time - start_time
             raise UpdateFailed(f"Error updating heating control: {err}") from err
+
+    async def _async_update_data_internal(self) -> HeatingStateSnapshot:
+        """Internal update logic without timeout wrapper."""
+        snapshot = await self.hass.async_add_executor_job(
+            self._calculate_heating_state
+        )
+
+        should_apply_control = self._detect_state_transitions(snapshot)
+
+        if should_apply_control:
+            _LOGGER.info("State transition detected, applying control decisions")
+            timed_out_devices = await self._controller.async_apply(
+                snapshot.device_decisions.values()
+            )
+            self._timed_out_devices = timed_out_devices
+
+            if timed_out_devices:
+                device_count = len(snapshot.device_decisions)
+                timeout_count = len(timed_out_devices)
+                timeout_rate = timeout_count / device_count if device_count > 0 else 0
+
+                _LOGGER.warning(
+                    "The following devices timed out during control application: %s",
+                    ", ".join(timed_out_devices),
+                )
+
+                # Circuit breaker: detect cascading timeout scenario
+                if timeout_rate >= 0.8:  # 80% or more devices timing out
+                    _LOGGER.error(
+                        "CIRCUIT BREAKER: %d/%d devices (%.0f%%) are timing out. "
+                        "Possible network issue or unresponsive devices. "
+                        "Check device connectivity and network stability.",
+                        timeout_count,
+                        device_count,
+                        timeout_rate * 100,
+                    )
+        else:
+            _LOGGER.debug(
+                "No state transitions, skipping control application (preserving manual changes)"
+            )
+            self._timed_out_devices = []
+
+        self._update_previous_states(snapshot)
+
+        # Enrich snapshot with watchdog data
+        snapshot = self._add_watchdog_diagnostics(snapshot)
+
+        return snapshot
 
     def _detect_state_transitions(self, snapshot: HeatingStateSnapshot) -> bool:
         """Detect if any schedule states or presence changed."""
@@ -152,6 +227,44 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             schedule_id: decision.is_active
             for schedule_id, decision in snapshot.schedule_decisions.items()
         }
+
+    def _add_watchdog_diagnostics(self, snapshot: HeatingStateSnapshot) -> HeatingStateSnapshot:
+        """Enrich snapshot with watchdog diagnostics."""
+        # Determine watchdog status
+        # Use fractions of UPDATE_CYCLE_TIMEOUT as heuristic thresholds for diagnostics
+        watchdog_status = "healthy"
+        if self._last_update_duration:
+            if self._last_update_duration > UPDATE_CYCLE_TIMEOUT * 0.7:  # >35s
+                watchdog_status = "critical"
+            elif self._last_update_duration > UPDATE_CYCLE_TIMEOUT * 0.4:  # >20s
+                watchdog_status = "warning"
+
+        if self._timed_out_devices:
+            watchdog_status = "timeout"  # Timeout overrides all other statuses
+
+        # Create enriched diagnostics
+        enriched_diagnostics = DiagnosticsSnapshot(
+            now_time=snapshot.diagnostics.now_time,
+            tracker_states=snapshot.diagnostics.tracker_states,
+            trackers_home=snapshot.diagnostics.trackers_home,
+            trackers_total=snapshot.diagnostics.trackers_total,
+            auto_heating_enabled=snapshot.diagnostics.auto_heating_enabled,
+            schedule_count=snapshot.diagnostics.schedule_count,
+            active_schedules=snapshot.diagnostics.active_schedules,
+            active_devices=snapshot.diagnostics.active_devices,
+            last_update_duration=self._last_update_duration,
+            timed_out_devices=tuple(self._timed_out_devices),
+            watchdog_status=watchdog_status,
+        )
+
+        # Return new snapshot with enriched diagnostics
+        return HeatingStateSnapshot(
+            everyone_away=snapshot.everyone_away,
+            anyone_home=snapshot.anyone_home,
+            schedule_decisions=snapshot.schedule_decisions,
+            device_decisions=snapshot.device_decisions,
+            diagnostics=enriched_diagnostics,
+        )
 
     def force_update_on_next_refresh(self) -> None:
         """Force control application on next update (for config changes)."""
@@ -378,6 +491,10 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         try:
             now_hours, now_minutes_str = now_hm.split(":")
             now_minutes = int(now_hours) * 60 + int(now_minutes_str)
+            # Validate time bounds
+            if now_minutes >= MINUTES_PER_DAY or now_minutes < 0:
+                _LOGGER.warning("Time out of bounds (%d minutes); defaulting to 00:00", now_minutes)
+                now_minutes = 0
         except (ValueError, AttributeError):
             _LOGGER.debug("Invalid time '%s' while evaluating schedules; defaulting to 00:00", now_hm)
             now_minutes = 0
@@ -418,28 +535,33 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             # Filter out None, empty strings, and other falsy values
             valid_schedule_trackers = [t for t in schedule_trackers if t]
 
-            # Fetch states ONCE to prevent race conditions
-            tracker_states: Dict[str, Optional[State]] = {
-                t: self.hass.states.get(t) for t in valid_schedule_trackers
+            # Fetch states ONCE and store string values to prevent race conditions
+            # Store both State object and its state string value atomically
+            tracker_states: Dict[str, Tuple[Optional[State], Optional[str]]] = {
+                t: (
+                    (state := self.hass.states.get(t)),
+                    state.state if state else None
+                )
+                for t in valid_schedule_trackers
             }
 
             # Filter to usable trackers (with valid, available states)
-            usable_tracker_states: Dict[str, State] = {}
-            for tracker, state in tracker_states.items():
-                if not state:
+            usable_tracker_state_values: Dict[str, str] = {}
+            for tracker, (state_obj, state_value) in tracker_states.items():
+                if not state_obj or not state_value:
                     continue
-                if state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+                if state_value in (STATE_UNKNOWN, STATE_UNAVAILABLE):
                     _LOGGER.debug(
                         "Schedule '%s' tracker %s is %s, falling back to global presence",
                         schedule_name,
                         tracker,
-                        state.state,
+                        state_value,
                     )
                     continue
-                usable_tracker_states[tracker] = state
+                usable_tracker_state_values[tracker] = state_value
 
             # Log warning if trackers were specified but all are invalid
-            if valid_schedule_trackers and not usable_tracker_states:
+            if valid_schedule_trackers and not usable_tracker_state_values:
                 _LOGGER.warning(
                     "Schedule '%s' has per-schedule trackers configured %s but none are usable. "
                     "Falling back to global presence tracking.",
@@ -447,11 +569,11 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                     valid_schedule_trackers,
                 )
 
-            if usable_tracker_states:
-                # Use the SAME state objects we already fetched (prevents race condition)
+            if usable_tracker_state_values:
+                # Use the captured state string values (prevents race condition)
                 schedule_anyone_home = any(
-                    state.state == STATE_HOME
-                    for state in usable_tracker_states.values()
+                    state_value == STATE_HOME
+                    for state_value in usable_tracker_state_values.values()
                 )
             else:
                 # No specific trackers or all invalid: fall back to global presence
@@ -695,8 +817,9 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             raise ValueError("No schedules are configured for this entry")
 
         new_schedules = deepcopy(schedules)
-        target_name = schedule_name.casefold() if schedule_name else None
-        target_id_casefold = schedule_id.casefold() if schedule_id else None
+        # Check for empty strings in addition to None
+        target_name = schedule_name.casefold() if schedule_name and schedule_name.strip() else None
+        target_id_casefold = schedule_id.casefold() if schedule_id and schedule_id.strip() else None
         updated = False
         matched = False
 
