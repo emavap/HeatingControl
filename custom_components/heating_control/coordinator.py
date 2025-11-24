@@ -1,6 +1,7 @@
 """DataUpdateCoordinator for heating_control."""
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 from datetime import datetime, timedelta
 import logging
@@ -110,7 +111,8 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 )
 
         try:
-            snapshot = await self._async_update_data_internal()
+            async with asyncio.timeout(UPDATE_CYCLE_TIMEOUT):
+                snapshot = await self._async_update_data_internal()
 
             # Update timing
             end_time = time.time()
@@ -122,6 +124,15 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             )
 
             return snapshot
+
+        except asyncio.TimeoutError as err:
+            end_time = time.time()
+            self._last_update_complete = end_time
+            self._last_update_duration = end_time - start_time
+            self._timed_out_devices = ["update_cycle_timeout"]
+            raise UpdateFailed(
+                f"Heating control update exceeded {UPDATE_CYCLE_TIMEOUT}s watchdog timeout"
+            ) from err
 
         except Exception as err:
             end_time = time.time()
@@ -878,4 +889,5 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
         # Ensure the new configuration is applied promptly.
         self._force_update = True
+        await self.async_request_refresh()
         return True

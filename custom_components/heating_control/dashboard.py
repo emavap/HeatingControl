@@ -92,19 +92,6 @@ class HeatingControlDashboardStrategy(Strategy):
         schedule_cards = self._build_schedule_cards(entry_id, snapshot)
         sections: List[Dict[str, Any]] = []
 
-        history_cards = self._build_temperature_history_card(climate_entities)
-        if history_cards:
-            sections.append(
-                {
-                    "type": "grid",
-                    "columns": 1,
-                    "square": False,
-                    "column_span": "full",
-                    "title": "Temperature History (48h)",
-                    "cards": history_cards,
-                }
-            )
-
         sections.append(
             {
                 "type": "grid",
@@ -257,76 +244,6 @@ class HeatingControlDashboardStrategy(Strategy):
                 }
             ]
         return []
-
-    def _build_temperature_history_card(
-        self, climate_entities: Sequence[str]
-    ) -> List[Dict[str, Any]]:
-        """Create a history graph showing target temperatures for all devices."""
-        if not climate_entities:
-            return []
-
-        series: List[Dict[str, Any]] = []
-
-        for climate_entity in climate_entities:
-            state = self.hass.states.get(climate_entity)
-            if not state:
-                continue
-
-            # Store state data immediately to prevent race conditions
-            state_value = state.state
-            attributes = dict(state.attributes) if state.attributes else {}
-
-            device_name = self._friendly_name(climate_entity)
-            target_temperature = attributes.get("temperature")
-
-            if (
-                target_temperature is not None
-                and state_value in ("heat", "cool", "heat_cool", "auto")
-            ):
-                try:
-                    float(target_temperature)  # Validate it's numeric
-                    series.append(
-                        {
-                            "entity": climate_entity,
-                            "attribute": "temperature",
-                            "name": f"{device_name} Target",
-                            "type": "line",
-                            "stroke_width": 1,
-                        }
-                    )
-                except (ValueError, TypeError):
-                    # Skip non-numeric temperatures
-                    _LOGGER.debug(
-                        "Skipping temperature series for %s - non-numeric value: %s",
-                        climate_entity,
-                        target_temperature,
-                    )
-
-        if not series:
-            return [
-                {
-                    "type": "markdown",
-                    "content": (
-                        "Temperature history will appear once devices report "
-                        "target temperatures."
-                    ),
-                }
-            ]
-
-        return [
-            {
-                "type": "custom:apexcharts-card",
-                "graph_span": "48h",
-                "update_interval": "5min",
-                "header": {"show": False},
-                "apex_config": {
-                    "stroke": {
-                        "curve": "straight",
-                    },
-                },
-                "series": series,
-            }
-        ]
 
     def _build_overview_cards(
         self,
