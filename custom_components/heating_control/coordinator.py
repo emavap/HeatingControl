@@ -883,13 +883,10 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             new_data[CONF_SCHEDULES] = new_schedules
             update_kwargs["data"] = new_data
 
-        # Update config in background to avoid blocking UI
-        async def _update_config():
-            await self.hass.config_entries.async_update_entry(
-                config_entry, **update_kwargs
-            )
-
-        self.hass.async_create_task(_update_config())
+        # Update config entry (callback method; no await needed)
+        self.hass.config_entries.async_update_entry(
+            config_entry, **update_kwargs
+        )
 
         # Ensure the new configuration is applied immediately.
         self._force_update = True
