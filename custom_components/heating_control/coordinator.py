@@ -889,5 +889,5 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
         # Ensure the new configuration is applied promptly.
         self._force_update = True
-        self.async_request_refresh()  # Schedule immediate refresh (non-blocking)
+        self.hass.async_create_task(self.async_refresh())  # Schedule immediate refresh
         return True
