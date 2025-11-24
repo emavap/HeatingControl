@@ -818,7 +818,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         schedule_id: Optional[str] = None,
         schedule_name: Optional[str] = None,
         enabled: bool,
-    ) -> bool:
+    ) -> None:
         """Enable or disable a schedule and persist the change."""
         config_entry = self.config_entry
         source = config_entry.options or config_entry.data
@@ -871,7 +871,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 schedule_id or schedule_name,
                 "enabled" if enabled else "disabled",
             )
-            return False
+            return
 
         update_kwargs: Dict[str, Dict] = {}
         if config_entry.options:
@@ -887,6 +887,6 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             config_entry, **update_kwargs
         )
 
-        # Ensure the new configuration is applied on next update cycle.
+        # Ensure the new configuration is applied immediately.
         self._force_update = True
-        return True
+        self.hass.async_create_task(self.async_refresh())
