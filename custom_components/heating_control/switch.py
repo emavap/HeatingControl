@@ -161,6 +161,7 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
             schedule_id=self._schedule_id,
             enabled=True,
         )
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable the schedule."""
@@ -168,6 +169,7 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
             schedule_id=self._schedule_id,
             enabled=False,
         )
+        self.async_write_ha_state()
 
     def _get_schedule_decision(self):
         """Return the current schedule decision snapshot."""
