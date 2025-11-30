@@ -1,13 +1,14 @@
 """Switch entities for Heating Control schedules."""
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
@@ -76,6 +77,8 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         )
         self._fallback_name = schedule_name
         self._attr_unique_id = f"{entry.entry_id}_schedule_{schedule_id}_enabled"
+        self._pending_enabled_state: Optional[bool] = None
+        self._pending_clear_unsub: Optional[Callable[[], None]] = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -99,6 +102,13 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
     @property
     def is_on(self) -> bool:
         """Return True if the schedule is enabled."""
+        if self._pending_enabled_state is not None:
+            if self.coordinator.last_update_success is False:
+                self._cancel_pending_clear()
+                self._pending_enabled_state = None
+            else:
+                return self._pending_enabled_state
+
         schedule = self._get_schedule_decision()
         if schedule:
             return schedule.enabled
@@ -161,6 +171,9 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
             schedule_id=self._schedule_id,
             enabled=True,
         )
+        # Optimistically expose the new state until the coordinator refresh completes
+        self._pending_enabled_state = True
+        self._schedule_pending_clear()
         self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
@@ -169,7 +182,21 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
             schedule_id=self._schedule_id,
             enabled=False,
         )
+        # Optimistically expose the new state until the coordinator refresh completes
+        self._pending_enabled_state = False
+        self._schedule_pending_clear()
         self.async_write_ha_state()
+
+    def _handle_coordinator_update(self) -> None:
+        """Clear any pending state overrides when fresh data arrives."""
+        self._cancel_pending_clear()
+        self._pending_enabled_state = None
+        super()._handle_coordinator_update()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up any scheduled callbacks."""
+        self._cancel_pending_clear()
+        await super().async_will_remove_from_hass()
 
     def _get_schedule_decision(self):
         """Return the current schedule decision snapshot."""
@@ -192,6 +219,29 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
             if self._matches_schedule(schedule):
                 return schedule
         return None
+
+    def _clear_pending_state(self, *_args: Any) -> None:
+        """Drop optimistic state if the coordinator never confirms."""
+        if self._pending_enabled_state is None:
+            return
+        self._pending_enabled_state = None
+        self._cancel_pending_clear()
+        self.async_write_ha_state()
+
+    def _schedule_pending_clear(self) -> None:
+        """Ensure optimistic state is cleared even when refresh keeps failing."""
+        self._cancel_pending_clear()
+        self._pending_clear_unsub = async_call_later(
+            self.hass,
+            30,
+            self._clear_pending_state,
+        )
+
+    def _cancel_pending_clear(self) -> None:
+        """Cancel any scheduled optimistic-state reset."""
+        if self._pending_clear_unsub:
+            self._pending_clear_unsub()
+            self._pending_clear_unsub = None
 
     def _matches_schedule(self, schedule: Dict[str, Any]) -> bool:
         """Return True if the config schedule matches this switch."""
