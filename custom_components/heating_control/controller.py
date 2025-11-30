@@ -8,6 +8,7 @@ from typing import Dict, Iterable, Optional
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError, ServiceNotFound
 
 from .const import SERVICE_CALL_TIMEOUT, TEMPERATURE_EPSILON
 from .models import DeviceDecision
@@ -78,8 +79,11 @@ class ClimateController:
             return
 
         state = self._hass.states.get(entity_id)
-        if not state or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-            _LOGGER.debug("Skipping %s – entity state unavailable (%s)", entity_id, state)
+        if not state:
+            _LOGGER.debug("Skipping %s – entity not found in state machine", entity_id)
+            return
+        if state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            _LOGGER.debug("Skipping %s – entity state unavailable (%s)", entity_id, state.state)
             return
 
         # If device previously timed out, ignore history to force full refresh
@@ -210,27 +214,95 @@ class ClimateController:
                         )
                         self._timed_out_devices.add(entity_id)
 
-            # Determine what to store in history based on success and device state
-            if should_be_on:
-                history_temp = target_temp if temp_succeeded else previous_temp
-                history_fan = target_fan if fan_succeeded else previous_fan
-            else:
-                # When off, always store None to ensure temp/fan are set on next turn-on
-                history_temp = None
-                history_fan = None
-
-            self._history[entity_id] = _DeviceCommandState(
-                hvac_mode=hvac_mode if hvac_mode_succeeded else previous_mode,
-                temperature=history_temp,
-                fan=history_fan,
+            # Update command history and force refresh status
+            self._update_device_history(
+                entity_id,
+                hvac_mode if hvac_mode_succeeded else previous_mode,
+                target_temp if temp_succeeded else previous_temp,
+                target_fan if fan_succeeded else previous_fan,
+                should_be_on,
+            )
+            self._update_force_refresh_status(
+                entity_id,
+                hvac_mode_succeeded,
+                temp_succeeded,
+                fan_succeeded,
             )
 
-            # Manage force refresh set based on operation outcomes
-            if not hvac_mode_succeeded or not temp_succeeded or not fan_succeeded:
-                # At least one operation failed - force refresh on next cycle
-                self._force_refresh_devices.add(entity_id)
-            elif entity_id in self._force_refresh_devices:
-                # All operations succeeded - remove from force refresh set
-                self._force_refresh_devices.discard(entity_id)
-        except Exception as err:  # pragma: no cover - defensive logging
-            _LOGGER.error("Error controlling %s: %s", entity_id, err)
+        except (ServiceNotFound, HomeAssistantError) as err:
+            _LOGGER.error(
+                "Home Assistant error controlling %s: %s",
+                entity_id,
+                err,
+                exc_info=True,
+            )
+            self._force_refresh_devices.add(entity_id)
+        except Exception as err:  # Unexpected errors
+            _LOGGER.exception("Unexpected error controlling %s", entity_id)
+            self._force_refresh_devices.add(entity_id)
+            raise  # Re-raise unexpected errors
+
+    def _update_device_history(
+        self,
+        entity_id: str,
+        hvac_mode: Optional[str],
+        temperature: Optional[float],
+        fan: Optional[str],
+        should_be_on: bool,
+    ) -> None:
+        """Update command history for a device.
+
+        Args:
+            entity_id: Climate entity ID
+            hvac_mode: HVAC mode that was set (or None if failed)
+            temperature: Temperature that was set (or None if failed/not applicable)
+            fan: Fan mode that was set (or None if failed/not applicable)
+            should_be_on: Whether device should be in an active state
+        """
+        # When off, always store None for temp/fan to ensure they're set on next turn-on
+        if not should_be_on:
+            temperature = None
+            fan = None
+
+        self._history[entity_id] = _DeviceCommandState(
+            hvac_mode=hvac_mode,
+            temperature=temperature,
+            fan=fan,
+        )
+
+    def _update_force_refresh_status(
+        self,
+        entity_id: str,
+        hvac_mode_succeeded: bool,
+        temp_succeeded: bool,
+        fan_succeeded: bool,
+    ) -> None:
+        """Update force refresh status based on operation results.
+
+        Devices that experience command failures are marked for force refresh
+        on the next cycle to ensure state synchronization.
+
+        Args:
+            entity_id: Climate entity ID
+            hvac_mode_succeeded: Whether HVAC mode command succeeded
+            temp_succeeded: Whether temperature command succeeded
+            fan_succeeded: Whether fan mode command succeeded
+        """
+        operation_failed = not (hvac_mode_succeeded and temp_succeeded and fan_succeeded)
+
+        if operation_failed:
+            self._force_refresh_devices.add(entity_id)
+            _LOGGER.debug(
+                "Marked %s for force refresh (hvac=%s, temp=%s, fan=%s)",
+                entity_id,
+                hvac_mode_succeeded,
+                temp_succeeded,
+                fan_succeeded,
+            )
+        elif entity_id in self._force_refresh_devices:
+            # All operations succeeded - clear force refresh flag
+            self._force_refresh_devices.discard(entity_id)
+            _LOGGER.debug(
+                "Cleared force refresh flag for %s (all operations succeeded)",
+                entity_id,
+            )

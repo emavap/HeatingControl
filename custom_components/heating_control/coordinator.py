@@ -60,6 +60,50 @@ def _mode_supports_temperature(mode: Optional[str]) -> bool:
     return mode in HVAC_MODES_WITH_TEMPERATURE
 
 
+def _parse_time_to_minutes(time_str: str, logger: logging.Logger) -> int:
+    """Parse HH:MM time string to minutes since midnight with validation.
+
+    Args:
+        time_str: Time string in HH:MM format
+        logger: Logger instance for warnings
+
+    Returns:
+        Minutes since midnight (0-1439), or 0 if invalid
+
+    Examples:
+        >>> _parse_time_to_minutes("08:30", logger)
+        510  # 8 * 60 + 30
+        >>> _parse_time_to_minutes("23:59", logger)
+        1439
+        >>> _parse_time_to_minutes("invalid", logger)
+        0  # Logs warning and returns default
+    """
+    try:
+        if not isinstance(time_str, str) or ':' not in time_str:
+            raise ValueError(f"Invalid time format: {time_str}")
+
+        parts = time_str.split(':')
+        if len(parts) != 2:
+            raise ValueError(f"Time must be HH:MM format: {time_str}")
+
+        hours, minutes = int(parts[0]), int(parts[1])
+
+        if not (0 <= hours < 24 and 0 <= minutes < 60):
+            raise ValueError(f"Time out of range: {time_str}")
+
+        total_minutes = hours * 60 + minutes
+
+        # Additional validation for edge cases
+        if total_minutes >= MINUTES_PER_DAY or total_minutes < 0:
+            raise ValueError(f"Time out of bounds: {total_minutes} minutes")
+
+        return total_minutes
+
+    except (ValueError, AttributeError) as err:
+        logger.warning("Invalid time '%s': %s, defaulting to 00:00", time_str, err)
+        return 0
+
+
 class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
     """Class to manage fetching heating control data."""
 
@@ -89,6 +133,33 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             name=DOMAIN,
             update_interval=timedelta(seconds=UPDATE_INTERVAL),
         )
+
+    @property
+    def config(self) -> Dict[str, Any]:
+        """Get current configuration (options or data)."""
+        return self.config_entry.options or self.config_entry.data
+
+    def get_schedule_by_id(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        """Get schedule config by ID or name.
+
+        Args:
+            schedule_id: Schedule ID or name to look up
+
+        Returns:
+            Schedule configuration dict, or None if not found
+        """
+        schedules = self.config.get(CONF_SCHEDULES, [])
+        schedule_id_lower = schedule_id.casefold()
+
+        for schedule in schedules:
+            # Match by ID first
+            if schedule.get(CONF_SCHEDULE_ID) == schedule_id:
+                return schedule
+            # Fall back to name match (case-insensitive)
+            if schedule.get(CONF_SCHEDULE_NAME, "").casefold() == schedule_id_lower:
+                return schedule
+
+        return None
 
     async def _async_update_data(self) -> HeatingStateSnapshot:
         """Update data and apply control decisions with watchdog protection.
@@ -288,6 +359,29 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
         For each device, schedules run sequentially. A schedule controlling multiple devices
         stays active until the last of its devices has a newer schedule take over.
+
+        Example:
+            Schedules:
+            - Schedule A: 08:00-auto, devices=[bedroom, living_room]
+            - Schedule B: 10:00-auto, devices=[bedroom]
+            - Schedule C: 12:00-auto, devices=[living_room]
+
+            Per-device timelines:
+            - bedroom: [A@08:00, B@10:00]
+            - living_room: [A@08:00, C@12:00]
+
+            Derived end times:
+            - Schedule A: 10:00 (bedroom ends at 10:00, living_room at 12:00 → take latest: 12:00)
+              Actually, we take the LATEST, so A ends at 12:00
+            - Schedule B: 23:59 (only schedule for bedroom after 10:00)
+            - Schedule C: 23:59 (only schedule for living_room after 12:00)
+
+        Args:
+            schedules: List of schedule configurations (dicts with CONF_* keys)
+
+        Returns:
+            Dict mapping schedule_id to derived end time (HH:MM format)
+            Only includes schedules that need auto-derived end times.
         """
         # Step 1: Build per-device timelines
         # device_timelines[device_entity] = [(start_minutes, schedule_id, start_hm), ...]
@@ -312,13 +406,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             raw_start = str(schedule.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START))
             start_hm = raw_start[:5]
 
-            try:
-                hours, minutes = start_hm.split(":")
-                start_minutes = int(hours) * 60 + int(minutes)
-            except (ValueError, AttributeError):
-                start_hm = DEFAULT_SCHEDULE_START
-                hours, minutes = start_hm.split(":")
-                start_minutes = int(hours) * 60 + int(minutes)
+            start_minutes = _parse_time_to_minutes(start_hm, _LOGGER)
 
             devices = schedule.get(CONF_SCHEDULE_DEVICES, [])
             schedule_info[schedule_id] = (index, start_hm, start_minutes, devices)
@@ -399,7 +487,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
     def _calculate_heating_state(self) -> HeatingStateSnapshot:
         """Calculate the current heating state based on configuration."""
-        config = self.config_entry.options or self.config_entry.data
+        config = self.config
         now = datetime.now()
         now_hm = now.strftime("%H:%M")
 
@@ -499,16 +587,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         schedule_decisions: Dict[str, ScheduleDecision] = {}
         device_builders: Dict[str, List[Dict[str, Any]]] = {}
 
-        try:
-            now_hours, now_minutes_str = now_hm.split(":")
-            now_minutes = int(now_hours) * 60 + int(now_minutes_str)
-            # Validate time bounds
-            if now_minutes >= MINUTES_PER_DAY or now_minutes < 0:
-                _LOGGER.warning("Time out of bounds (%d minutes); defaulting to 00:00", now_minutes)
-                now_minutes = 0
-        except (ValueError, AttributeError):
-            _LOGGER.debug("Invalid time '%s' while evaluating schedules; defaulting to 00:00", now_hm)
-            now_minutes = 0
+        now_minutes = _parse_time_to_minutes(now_hm, _LOGGER)
 
         auto_end_times = self._derive_auto_end_times(schedules)
 
@@ -527,16 +606,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             else:
                 end_time = auto_end_times.get(schedule_id, DEFAULT_SCHEDULE_END)
 
-            try:
-                start_hours, start_minutes = start_time.split(":")
-                start_value = int(start_hours) * 60 + int(start_minutes)
-            except (ValueError, AttributeError):
-                _LOGGER.warning(
-                    "Invalid start_time format for schedule %s: %s, defaulting to 00:00",
-                    schedule_name,
-                    start_time,
-                )
-                start_value = 0
+            start_value = _parse_time_to_minutes(start_time, _LOGGER)
             start_age = (now_minutes - start_value) % MINUTES_PER_DAY
 
             only_when_home = schedule.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True)

@@ -122,10 +122,9 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         if self._get_schedule_decision():
             return True
 
-        config = self.coordinator.config_entry.options or self.coordinator.config_entry.data
-        for schedule in config.get(CONF_SCHEDULES, []):
-            if self._matches_schedule(schedule):
-                return True
+        # Check if schedule exists in config
+        if self._get_config_schedule():
+            return True
 
         return False
 
@@ -198,7 +197,7 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         self._cancel_pending_clear()
         await super().async_will_remove_from_hass()
 
-    def _get_schedule_decision(self):
+    def _get_schedule_decision(self) -> Optional[Any]:
         """Return the current schedule decision snapshot."""
         snapshot = self.coordinator.data
         if not snapshot:
@@ -214,11 +213,8 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
 
     def _get_config_schedule(self) -> Optional[Dict[str, Any]]:
         """Return the schedule config from entry data/options."""
-        config = self.coordinator.config_entry.options or self.coordinator.config_entry.data
-        for schedule in config.get(CONF_SCHEDULES, []):
-            if self._matches_schedule(schedule):
-                return schedule
-        return None
+        # Use coordinator's helper method to reduce code duplication
+        return self.coordinator.get_schedule_by_id(self._schedule_id)
 
     def _clear_pending_state(self, *_args: Any) -> None:
         """Drop optimistic state if the coordinator never confirms."""
@@ -242,11 +238,3 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         if self._pending_clear_unsub:
             self._pending_clear_unsub()
             self._pending_clear_unsub = None
-
-    def _matches_schedule(self, schedule: Dict[str, Any]) -> bool:
-        """Return True if the config schedule matches this switch."""
-        current_id = schedule.get(CONF_SCHEDULE_ID)
-        current_name = schedule.get(CONF_SCHEDULE_NAME, "")
-        if current_id and current_id == self._schedule_id:
-            return True
-        return current_name.casefold() == self._fallback_name.casefold()

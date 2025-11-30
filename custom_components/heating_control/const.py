@@ -32,16 +32,29 @@ DEFAULT_SCHEDULE_TEMPERATURE = 20.0
 DEFAULT_SCHEDULE_FAN_MODE = "auto"
 DEFAULT_SCHEDULE_HVAC_MODE = "heat"
 DEFAULT_SCHEDULE_AWAY_HVAC_MODE = "off"
-DEFAULT_SETTLE_SECONDS = 5
-DEFAULT_FINAL_SETTLE = 2
+# Settle delays after HVAC mode changes (seconds)
+# Some devices need time to stabilize after mode changes before accepting temperature commands
+DEFAULT_SETTLE_SECONDS = 5  # Wait after HVAC mode change before sending temperature
+DEFAULT_FINAL_SETTLE = 2  # Final wait after all commands to ensure device stability
 
 # Timeout values (seconds)
-SERVICE_CALL_TIMEOUT = 30  # Maximum time for a single climate service call
-UPDATE_CYCLE_TIMEOUT = 50  # Baseline expected max runtime for a control cycle (used for watchdog diagnostics)
-WATCHDOG_STUCK_THRESHOLD = 180  # Time after which we consider the integration stuck
+# Maximum time for a single climate service call
+# Some smart thermostats (especially Zigbee/Z-Wave) can take 20-25s to respond
+SERVICE_CALL_TIMEOUT = 30
+
+# Maximum expected time for a complete update cycle
+# With 10 devices: 10 * (1s mode + 1s temp + 1s fan + 5s settle) ≈ 80s worst case
+# Set conservatively lower to catch stuck cycles early via watchdog diagnostics
+UPDATE_CYCLE_TIMEOUT = 50
+
+# Time after which we consider the integration completely stuck (3 minutes)
+# This threshold should be significantly higher than normal operation time
+WATCHDOG_STUCK_THRESHOLD = 180
 
 # Temperature comparison epsilon (°C)
-TEMPERATURE_EPSILON = 0.1  # Minimum temperature change to trigger update (accommodates 0.5°C increment devices)
+# Minimum temperature change to trigger an update
+# Set to 0.1°C to accommodate devices with 0.5°C increments and avoid floating-point comparison issues
+TEMPERATURE_EPSILON = 0.1
 
 # Sensor types
 BINARY_SENSOR_EVERYONE_AWAY = "everyone_away"
@@ -49,6 +62,8 @@ BINARY_SENSOR_EVERYONE_AWAY = "everyone_away"
 SENSOR_DECISION_DIAGNOSTICS = "decision_diagnostics"
 
 # Update interval (seconds)
+# How often the coordinator checks schedules and evaluates state transitions
+# 60 seconds provides responsive updates without excessive polling
 UPDATE_INTERVAL = 60
 
 # Services
