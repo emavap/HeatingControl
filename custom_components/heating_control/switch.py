@@ -79,6 +79,8 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_unique_id = f"{entry.entry_id}_schedule_{schedule_id}_enabled"
         self._pending_enabled_state: Optional[bool] = None
         self._pending_clear_unsub: Optional[Callable[[], None]] = None
+        # Cache for config schedule to reduce repeated lookups
+        self._cached_config_schedule: Optional[Dict[str, Any]] = None
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -104,8 +106,11 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         """Return True if the schedule is enabled."""
         if self._pending_enabled_state is not None:
             if self.coordinator.last_update_success is False:
+                # Coordinator update failed - clear optimistic state and update UI immediately
                 self._cancel_pending_clear()
                 self._pending_enabled_state = None
+                # Schedule state write to revert UI (can't call async_write_ha_state in property)
+                self.hass.async_create_task(self._async_revert_optimistic_state())
             else:
                 return self._pending_enabled_state
 
@@ -190,6 +195,8 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         """Clear any pending state overrides when fresh data arrives."""
         self._cancel_pending_clear()
         self._pending_enabled_state = None
+        # Invalidate config schedule cache on coordinator update
+        self._cached_config_schedule = None
         super()._handle_coordinator_update()
 
     async def async_will_remove_from_hass(self) -> None:
@@ -212,9 +219,30 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         return schedule.get(CONF_SCHEDULE_ENABLED, True)
 
     def _get_config_schedule(self) -> Optional[Dict[str, Any]]:
-        """Return the schedule config from entry data/options."""
-        # Use coordinator's helper method to reduce code duplication
-        return self.coordinator.get_schedule_by_id(self._schedule_id)
+        """Return the schedule config from entry data/options.
+
+        Uses caching to reduce repeated lookups. Cache is invalidated on coordinator updates.
+        Falls back to name matching if ID lookup fails (for robustness).
+        """
+        # Return cached value if available
+        if self._cached_config_schedule is not None:
+            return self._cached_config_schedule
+
+        # Try coordinator's helper (matches by ID or exact name)
+        schedule = self.coordinator.get_schedule_by_id(self._schedule_id)
+
+        # Fallback: if not found and we have a fallback name, try case-insensitive name match
+        if not schedule and self._fallback_name:
+            schedules = self.coordinator.config.get(CONF_SCHEDULES, [])
+            fallback_name_lower = self._fallback_name.casefold()
+            for sched in schedules:
+                if sched.get(CONF_SCHEDULE_NAME, "").casefold() == fallback_name_lower:
+                    schedule = sched
+                    break
+
+        # Cache the result (even if None) to avoid repeated lookups
+        self._cached_config_schedule = schedule
+        return schedule
 
     def _clear_pending_state(self, *_args: Any) -> None:
         """Drop optimistic state if the coordinator never confirms."""
@@ -225,11 +253,17 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         self.async_write_ha_state()
 
     def _schedule_pending_clear(self) -> None:
-        """Ensure optimistic state is cleared even when refresh keeps failing."""
+        """Ensure optimistic state is cleared even when refresh keeps failing.
+
+        Timeout is set to 2x the coordinator update interval to allow for
+        one potentially slow update cycle before reverting optimistic state.
+        """
         self._cancel_pending_clear()
+        # Scale timeout with coordinator update interval (2x with 60s minimum)
+        timeout_seconds = max(60, int(self.coordinator.update_interval.total_seconds() * 2))
         self._pending_clear_unsub = async_call_later(
             self.hass,
-            30,
+            timeout_seconds,
             self._clear_pending_state,
         )
 
@@ -238,3 +272,8 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         if self._pending_clear_unsub:
             self._pending_clear_unsub()
             self._pending_clear_unsub = None
+
+    async def _async_revert_optimistic_state(self) -> None:
+        """Revert optimistic state and update UI (called when coordinator update fails)."""
+        # This is called as a task from is_on property to write state without blocking
+        self.async_write_ha_state()
