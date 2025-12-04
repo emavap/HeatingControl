@@ -298,7 +298,8 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        super().__init__()
+        self._config_entry = config_entry
         # Mutable copy of current schedules shown in the options flow
         self._pending_schedules: list[dict[str, Any]] = []
         # Updated global settings staged during the options flow
@@ -337,7 +338,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
             }
             return await self.async_step_select_devices()
 
-        current_config = self.config_entry.options or self.config_entry.data
+        current_config = self._config_entry.options or self._config_entry.data
         default_trackers = _extract_trackers(current_config)
 
         data_schema = vol.Schema(
@@ -361,7 +362,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Select which climate devices to manage."""
-        current_config = self.config_entry.options or self.config_entry.data
+        current_config = self._config_entry.options or self._config_entry.data
 
         if user_input is not None:
             self._selected_climate_entities = user_input.get(CONF_CLIMATE_DEVICES, [])
@@ -384,7 +385,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage schedules."""
-        current_config = self.config_entry.options or self.config_entry.data
+        current_config = self._config_entry.options or self._config_entry.data
 
         if not self._pending_schedules:
             self._pending_schedules = list(current_config.get(CONF_SCHEDULES, []))
