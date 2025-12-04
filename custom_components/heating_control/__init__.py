@@ -495,6 +495,36 @@ async def _async_remove_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> No
         # No dashboard was auto-created
         return
 
+    # Remove Lovelace dashboard registry entry and sidebar panel
+    try:
+        from homeassistant.components.lovelace import (
+            const as lovelace_const,
+            dashboard as lovelace_dashboard,
+        )
+
+        dashboards_collection = lovelace_dashboard.DashboardsCollection(hass)
+        await dashboards_collection.async_load()
+
+        # Locate the dashboard entry by url_path
+        item_id = None
+        for item in dashboards_collection.data.values():
+            if item.get(lovelace_const.CONF_URL_PATH) == dashboard_url:
+                item_id = item.get("id")
+                break
+
+        if item_id:
+            await dashboards_collection.async_delete_item(item_id)
+            _LOGGER.debug("Deleted Lovelace dashboard registry entry %s", item_id)
+
+        # Remove the built-in panel if present
+        frontend.async_remove_panel(hass, dashboard_url)
+    except Exception as err:  # pylint: disable=broad-except
+        _LOGGER.debug(
+            "Dashboard registry/panel removal failed for %s (non-critical): %s",
+            dashboard_url,
+            err,
+        )
+
     try:
         await hass.async_add_executor_job(
             _remove_dashboard_sync,

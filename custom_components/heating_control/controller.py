@@ -115,6 +115,9 @@ class ClimateController:
         )
         fan_changed = should_be_on and target_fan is not None and previous_fan != target_fan
 
+        # Track fan value that should be stored in history (may differ if unsupported)
+        fan_target_for_history = target_fan
+
         if not state_changed and not temp_changed and not fan_changed:
             _LOGGER.debug("No changes required for %s", entity_id)
             return
@@ -193,6 +196,15 @@ class ClimateController:
                                 SERVICE_CALL_TIMEOUT,
                             )
                             self._timed_out_devices.add(entity_id)
+                    else:
+                        # Device does not expose the requested fan mode; treat as no-op
+                        _LOGGER.debug(
+                            "Skipping fan mode %s for %s; not supported by device",
+                            target_fan,
+                            entity_id,
+                        )
+                        fan_succeeded = True
+                        fan_target_for_history = previous_fan
 
                 if state_changed and hvac_mode_succeeded:
                     await asyncio.sleep(self._final_settle)
@@ -219,13 +231,13 @@ class ClimateController:
                         self._timed_out_devices.add(entity_id)
 
             # Update command history and force refresh status
-            self._update_device_history(
-                entity_id,
-                hvac_mode if hvac_mode_succeeded else previous_mode,
-                target_temp if temp_succeeded else previous_temp,
-                target_fan if fan_succeeded else previous_fan,
-                should_be_on,
-            )
+                self._update_device_history(
+                    entity_id,
+                    hvac_mode if hvac_mode_succeeded else previous_mode,
+                    target_temp if temp_succeeded else previous_temp,
+                    fan_target_for_history if fan_succeeded else previous_fan,
+                    should_be_on,
+                )
             self._update_force_refresh_status(
                 entity_id,
                 hvac_mode_succeeded,

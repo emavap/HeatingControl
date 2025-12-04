@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import timedelta
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from homeassistant.util import dt as dt_util
 from homeassistant.const import STATE_HOME, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -488,7 +489,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
     def _calculate_heating_state(self) -> HeatingStateSnapshot:
         """Calculate the current heating state based on configuration."""
         config = self.config
-        now = datetime.now()
+        now = dt_util.now()
         now_hm = now.strftime("%H:%M")
 
         tracker_states, anyone_home, everyone_away = self._resolve_presence(config)
