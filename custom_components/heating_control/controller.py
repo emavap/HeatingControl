@@ -107,7 +107,11 @@ class ClimateController:
         temp_changed = (
             should_be_on
             and target_temp is not None
-            and (previous_temp is None or abs(previous_temp - target_temp) > TEMPERATURE_EPSILON)
+            and (
+                state_changed
+                or previous_temp is None
+                or abs(previous_temp - target_temp) > TEMPERATURE_EPSILON
+            )
         )
         fan_changed = should_be_on and target_fan is not None and previous_fan != target_fan
 

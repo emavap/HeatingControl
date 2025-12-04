@@ -94,6 +94,29 @@ async def test_temperature_change_without_mode_toggle(dummy_hass: DummyHass, no_
 
 
 @pytest.mark.asyncio
+async def test_temperature_sent_when_mode_changes(dummy_hass: DummyHass, no_sleep):
+    """Ensure temperature is reasserted on HVAC mode changes even if setpoint is unchanged."""
+    dummy_hass.states.set(
+        "climate.study",
+        DummyState("heat", {}),
+    )
+    controller = make_controller(dummy_hass)
+
+    await controller.async_apply([
+        _decision("climate.study", hvac_mode="heat", temp=21.0, fan="auto")
+    ])
+    dummy_hass.services.calls.clear()
+
+    await controller.async_apply([
+        _decision("climate.study", hvac_mode="cool", temp=21.0, fan="auto")
+    ])
+
+    services = dummy_hass.services.calls
+    assert any(call["service"] == "set_hvac_mode" for call in services)
+    assert any(call["service"] == "set_temperature" for call in services)
+
+
+@pytest.mark.asyncio
 async def test_turn_off_device(dummy_hass: DummyHass, no_sleep):
     dummy_hass.states.set(
         "climate.bedroom",
