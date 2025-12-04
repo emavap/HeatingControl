@@ -37,7 +37,6 @@ DEFAULT_SCHEDULE_AWAY_HVAC_MODE = "off"
 DEFAULT_SETTLE_SECONDS = 5  # Wait after HVAC mode change before sending temperature
 DEFAULT_FINAL_SETTLE = 2  # Final wait after all commands to ensure device stability
 
-# Timeout values (seconds)
 # Maximum time for a single climate service call
 # Some smart thermostats (especially Zigbee/Z-Wave) can take 20-25s to respond
 SERVICE_CALL_TIMEOUT = 30
@@ -47,14 +46,22 @@ SERVICE_CALL_TIMEOUT = 30
 # Set conservatively lower to catch stuck cycles early via watchdog diagnostics
 UPDATE_CYCLE_TIMEOUT = 50
 
-# Time after which we consider the integration completely stuck (3 minutes)
-# This threshold should be significantly higher than normal operation time
-WATCHDOG_STUCK_THRESHOLD = 180
+# Circuit breaker and watchdog constants
+CIRCUIT_BREAKER_TIMEOUT_THRESHOLD = 0.8  # 80% timeout rate triggers circuit breaker
+CIRCUIT_BREAKER_COOLDOWN_MINUTES = 5  # Minutes to wait before re-enabling after circuit breaker
+WATCHDOG_STUCK_THRESHOLD = 600  # 10 minutes in seconds
+WATCHDOG_TIMEOUT_THRESHOLD = 300  # 5 minutes in seconds
 
-# Temperature comparison epsilon (°C)
-# Minimum temperature change to trigger an update
-# Set to 0.1°C to accommodate devices with 0.5°C increments and avoid floating-point comparison issues
-TEMPERATURE_EPSILON = 0.1
+# Temperature comparison epsilon
+TEMPERATURE_EPSILON = 0.1  # Degrees - avoid unnecessary commands for tiny differences
+
+# Performance optimization
+MAX_CONCURRENT_DEVICE_COMMANDS = 5  # Limit parallel climate commands
+PRESENCE_CACHE_SECONDS = 30  # Cache presence state to reduce entity lookups
+
+# Entity validation
+SUPPORTED_CLIMATE_DOMAINS = ["climate"]
+SUPPORTED_TRACKER_DOMAINS = ["device_tracker", "person", "zone"]
 
 # Sensor types
 BINARY_SENSOR_EVERYONE_AWAY = "everyone_away"
@@ -82,9 +89,48 @@ DEVICE_BINARY_ENTITY_TEMPLATE = "binary_sensor.heating_device_{entry}_{device}"
 ENTITY_DECISION_DIAGNOSTICS = "sensor.heating_control_decision_diagnostics"
 ENTITY_EVERYONE_AWAY = "binary_sensor.heating_control_everyone_away"
 
-# Dashboard
-DASHBOARD_TITLE = "Smart Heating"
-DASHBOARD_ICON = "mdi:thermostat"
-DASHBOARD_URL_PATH_TEMPLATE = "heating-control-{entry_id}"
-DASHBOARD_CREATED_KEY = "dashboard_url"
-DASHBOARD_ENTRY_ID_LENGTH = 8  # Length of entry_id prefix for dashboard URL
+# Time parsing constants
+MINUTES_PER_DAY = 24 * 60
+HOURS_PER_DAY = 24
+MINUTES_PER_HOUR = 60
+
+# HVAC mode constants
+HVAC_MODES_WITH_TEMPERATURE = {"heat", "cool", "heat_cool", "auto"}
+
+# Dashboard and UI constants
+DASHBOARD_REFRESH_DELAY_SECONDS = 2
+OPTIMISTIC_STATE_TIMEOUT_MULTIPLIER = 2
+OPTIMISTIC_STATE_MIN_TIMEOUT = 60
+
+# Schedule evaluation constants
+SCHEDULE_CACHE_EXPIRY_SECONDS = 300  # 5 minutes
+PRESENCE_HASH_CACHE_SECONDS = 60
+
+# Performance monitoring
+PERFORMANCE_SAMPLE_SIZE = 50
+CACHE_HIT_RATE_WINDOW = 100
+
+# Version compatibility
+MIN_DASHBOARD_STRATEGY_VERSION = "2024.4.0"
+
+# Device timeout overrides (seconds)
+DEVICE_TIMEOUT_OVERRIDES = {
+    "zigbee": 45,
+    "zwave": 35, 
+    "wifi": 20,
+    "esphome": 15,
+    "tasmota": 20,
+}
+
+# Device-specific settle delays (seconds)
+DEVICE_SETTLE_OVERRIDES = {
+    "zigbee": {"settle": 8, "final_settle": 3},
+    "zwave": {"settle": 6, "final_settle": 2}, 
+    "wifi": {"settle": 3, "final_settle": 1},
+    "esphome": {"settle": 2, "final_settle": 1},
+    "tasmota": {"settle": 3, "final_settle": 1},
+}
+
+# Validation thresholds
+MAX_SCHEDULE_OVERLAPS_WARNING = 3
+MIN_SCHEDULE_DURATION_MINUTES = 15

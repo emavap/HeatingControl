@@ -1,137 +1,158 @@
-"""Config flow for Heating Control integration."""
-from __future__ import annotations
-
+"""Enhanced config flow with entity validation."""
 import logging
-from typing import Any
-import uuid
-
+from typing import Dict, List, Optional, Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.const import CONF_ENTITY_ID
 
 from .const import (
     DOMAIN,
     CONF_DEVICE_TRACKERS,
     CONF_AUTO_HEATING_ENABLED,
-    CONF_SCHEDULES,
-    CONF_SCHEDULE_ID,
-    CONF_SCHEDULE_NAME,
-    CONF_SCHEDULE_ENABLED,
-    CONF_SCHEDULE_START,
-    CONF_SCHEDULE_END,
-    CONF_SCHEDULE_ONLY_WHEN_HOME,
-    CONF_SCHEDULE_DEVICE_TRACKERS,
-    CONF_SCHEDULE_HVAC_MODE,
-    CONF_SCHEDULE_AWAY_HVAC_MODE,
-    CONF_SCHEDULE_AWAY_TEMPERATURE,
-    CONF_SCHEDULE_DEVICES,
-    CONF_SCHEDULE_TEMPERATURE,
-    CONF_SCHEDULE_FAN_MODE,
     CONF_CLIMATE_DEVICES,
-    DEFAULT_SCHEDULE_START,
-    DEFAULT_SCHEDULE_END,
-    DEFAULT_SCHEDULE_TEMPERATURE,
-    DEFAULT_SCHEDULE_HVAC_MODE,
-    DEFAULT_SCHEDULE_FAN_MODE,
-    DEFAULT_SCHEDULE_AWAY_HVAC_MODE,
+    CONF_SCHEDULES,
+    SUPPORTED_CLIMATE_DOMAINS,
+    SUPPORTED_TRACKER_DOMAINS,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _extract_trackers(config: dict[str, Any] | None) -> list[str]:
-    """Return configured device trackers."""
-    if not config:
-        return []
-
-    trackers = config.get(CONF_DEVICE_TRACKERS, [])
-    return list(trackers)
+def _extract_trackers(config: Dict[str, Any]) -> List[str]:
+    """Extract device trackers from config."""
+    return config.get(CONF_DEVICE_TRACKERS, [])
 
 
 class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Heating Control."""
+    """Enhanced config flow with entity validation."""
 
     VERSION = 2
     MINOR_VERSION = 1
 
     def __init__(self):
-        """Initialize the config flow state containers."""
-        # In-progress schedules gathered before creating the entry
-        self._pending_schedules: list[dict[str, Any]] = []
-        # Global integration settings from the initial step
-        self._global_settings: dict[str, Any] = {}
-        # Climate devices chosen for Heating Control management
-        self._selected_climate_entities: list[str] = []
+        """Initialize config flow."""
+        self._global_settings: Dict[str, Any] = {}
+        self._selected_climate_entities: List[str] = []
+        self._pending_schedules: List[Dict[str, Any]] = []
+        self._schedule_index: Optional[int] = None
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the initial step - global settings."""
-        errors: dict[str, str] = {}
+    def _validate_entity_exists(self, entity_id: str, domain: str = None) -> bool:
+        """Validate that an entity exists and optionally check domain."""
+        if not entity_id:
+            return False
+            
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return False
+            
+        if domain and not entity_id.startswith(f"{domain}."):
+            return False
+            
+        return True
 
+    def _validate_climate_devices(self, climate_devices: list) -> dict:
+        """Validate climate devices with detailed error reporting."""
+        errors = {}
+        invalid_devices = []
+        
+        for device in climate_devices:
+            if not self._validate_entity_exists(device, "climate"):
+                invalid_devices.append(device)
+        
+        if invalid_devices:
+            errors["climate_devices"] = f"Invalid climate entities: {', '.join(invalid_devices)}"
+            
+        return errors
+
+    def _validate_device_trackers(self, device_trackers: list) -> dict:
+        """Validate device trackers with detailed error reporting."""
+        errors = {}
+        invalid_trackers = []
+        
+        for tracker in device_trackers:
+            if not tracker:  # Skip empty strings
+                continue
+                
+            # Check if entity exists and is a supported domain
+            if not self._validate_entity_exists(tracker):
+                invalid_trackers.append(tracker)
+            elif not any(tracker.startswith(f"{domain}.") for domain in SUPPORTED_TRACKER_DOMAINS):
+                invalid_trackers.append(f"{tracker} (unsupported domain)")
+        
+        if invalid_trackers:
+            errors["device_trackers"] = f"Invalid trackers: {', '.join(invalid_trackers)}"
+            
+        return errors
+
+    async def async_step_global_settings(self, user_input=None):
+        """Handle global settings step with enhanced validation."""
+        errors = {}
+        
         if user_input is not None:
-            self._global_settings = {
-                **user_input,
-                CONF_DEVICE_TRACKERS: list(user_input.get(CONF_DEVICE_TRACKERS, [])),
-            }
-            return await self.async_step_select_devices()
-
-        default_trackers = _extract_trackers(self._global_settings)
-
-        data_schema = vol.Schema(
-            {
-                vol.Optional(
-                    CONF_DEVICE_TRACKERS,
-                    default=default_trackers,
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="device_tracker", multiple=True)
-                ),
-                vol.Required(CONF_AUTO_HEATING_ENABLED, default=True): selector.BooleanSelector(),
-            }
-        )
-
+            # Validate device trackers
+            device_trackers = user_input.get(CONF_DEVICE_TRACKERS, [])
+            tracker_errors = self._validate_device_trackers(device_trackers)
+            errors.update(tracker_errors)
+            
+            if not errors:
+                self._global_config = user_input
+                return await self.async_step_select_devices()
+        
+        # Get available device trackers with validation
+        available_trackers = []
+        for domain in SUPPORTED_TRACKER_DOMAINS:
+            for entity_id in self.hass.states.async_entity_ids(domain):
+                if self._validate_entity_exists(entity_id):
+                    available_trackers.append(entity_id)
+        
         return self.async_show_form(
-            step_id="user", data_schema=data_schema, errors=errors
+            step_id="global_settings",
+            data_schema=vol.Schema({
+                vol.Optional(CONF_DEVICE_TRACKERS, default=[]): cv.multi_select(available_trackers),
+                vol.Optional(CONF_AUTO_HEATING_ENABLED, default=True): bool,
+            }),
+            errors=errors,
         )
 
-    async def async_step_select_devices(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Select which climate devices to manage."""
-        errors: dict[str, str] = {}
-
+    async def async_step_select_devices(self, user_input=None):
+        """Handle device selection step with enhanced validation."""
+        errors = {}
+        
         if user_input is not None:
-            self._selected_climate_entities = user_input.get(CONF_CLIMATE_DEVICES, [])
-            if not self._selected_climate_entities:
-                errors["base"] = "no_devices"
-            else:
-                return await self.async_step_add_schedule()
-
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_CLIMATE_DEVICES): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="climate", multiple=True)
-                ),
-            }
-        )
-
+            # Validate climate devices
+            climate_devices = user_input.get(CONF_CLIMATE_DEVICES, [])
+            device_errors = self._validate_climate_devices(climate_devices)
+            errors.update(device_errors)
+            
+            if not errors:
+                self._device_config = user_input
+                return await self.async_step_manage_schedules()
+        
+        # Get available climate devices with validation
+        available_climate = []
+        for entity_id in self.hass.states.async_entity_ids("climate"):
+            if self._validate_entity_exists(entity_id, "climate"):
+                available_climate.append(entity_id)
+        
+        if not available_climate:
+            errors["base"] = "no_climate_devices"
+        
         return self.async_show_form(
             step_id="select_devices",
-            data_schema=data_schema,
+            data_schema=vol.Schema({
+                vol.Required(CONF_CLIMATE_DEVICES): cv.multi_select(available_climate),
+            }),
             errors=errors,
-            description_placeholders={
-                "info": "Select all climate devices (aircos, heaters) that you want to manage with schedules."
-            }
         )
 
     async def async_step_add_schedule(
-        self, user_input: dict[str, Any] | None = None
+        self, user_input: Dict[str, Any] | None = None
     ) -> FlowResult:
         """Ask if user wants to add a schedule."""
-        errors: dict[str, str] = {}
+        errors: Dict[str, str] = {}
 
         if user_input is not None:
             if user_input.get("add_schedule"):
@@ -177,10 +198,10 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_schedule_config(
-        self, user_input: dict[str, Any] | None = None
+        self, user_input: Dict[str, Any] | None = None
     ) -> FlowResult:
         """Configure a single schedule."""
-        errors: dict[str, str] = {}
+        errors: Dict[str, str] = {}
 
         if user_input is not None:
             schedule_config = {
@@ -294,20 +315,15 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class HeatingControlOptionsFlow(config_entries.OptionsFlow):
-    """Handle options flow for Heating Control."""
+    """Enhanced options flow with validation."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        super().__init__()
         self._config_entry = config_entry
-        # Mutable copy of current schedules shown in the options flow
-        self._pending_schedules: list[dict[str, Any]] = []
-        # Updated global settings staged during the options flow
-        self._global_settings: dict[str, Any] = {}
-        # Snapshot of the climate devices selection
-        self._selected_climate_entities: list[str] = []
-        # Index of the schedule currently being edited (if any)
-        self._active_schedule_index: int | None = None
+        self._global_settings: Dict[str, Any] = {}
+        self._selected_climate_entities: List[str] = []
+        self._pending_schedules: List[Dict[str, Any]] = []
+        self._schedule_index: Optional[int] = None
 
     def _build_schedule_options(self) -> list[dict[str, str]]:
         """Build schedule selector options for edit/delete operations."""
@@ -327,21 +343,37 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
             for idx, schedule in enumerate(self._pending_schedules)
         ]
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Manage the options - global settings."""
+    async def async_step_init(self, user_input: Dict[str, Any] | None = None):
+        """Manage the options - global settings with validation."""
         if user_input is not None:
+            # Validate device trackers
+            device_trackers = user_input.get(CONF_DEVICE_TRACKERS, [])
+            tracker_errors = await self._validate_device_trackers(device_trackers)
+            
+            if tracker_errors:
+                return self.async_show_form(
+                    step_id="init",
+                    data_schema=self._build_init_schema(),
+                    errors={"base": "invalid_device_trackers"},
+                )
+            
             self._global_settings = {
                 **user_input,
-                CONF_DEVICE_TRACKERS: list(user_input.get(CONF_DEVICE_TRACKERS, [])),
+                CONF_DEVICE_TRACKERS: list(device_trackers),
             }
             return await self.async_step_select_devices()
 
+        return self.async_show_form(
+            step_id="init", 
+            data_schema=self._build_init_schema()
+        )
+
+    def _build_init_schema(self):
+        """Build schema for initial options step."""
         current_config = self._config_entry.options or self._config_entry.data
         default_trackers = _extract_trackers(current_config)
 
-        data_schema = vol.Schema(
+        return vol.Schema(
             {
                 vol.Optional(
                     CONF_DEVICE_TRACKERS,
@@ -356,10 +388,8 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
             }
         )
 
-        return self.async_show_form(step_id="init", data_schema=data_schema)
-
     async def async_step_select_devices(
-        self, user_input: dict[str, Any] | None = None
+        self, user_input: Dict[str, Any] | None = None
     ) -> FlowResult:
         """Select which climate devices to manage."""
         current_config = self._config_entry.options or self._config_entry.data
@@ -382,7 +412,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(step_id="select_devices", data_schema=data_schema)
 
     async def async_step_manage_schedules(
-        self, user_input: dict[str, Any] | None = None
+        self, user_input: Dict[str, Any] | None = None
     ) -> FlowResult:
         """Manage schedules."""
         current_config = self._config_entry.options or self._config_entry.data
@@ -452,10 +482,10 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def async_step_add_schedule(
-        self, user_input: dict[str, Any] | None = None
+        self, user_input: Dict[str, Any] | None = None
     ) -> FlowResult:
         """Add a schedule."""
-        errors: dict[str, str] = {}
+        errors: Dict[str, str] = {}
 
         if user_input is not None:
             schedule_config = {
@@ -559,7 +589,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def async_step_select_schedule_to_edit(
-        self, user_input: dict[str, Any] | None = None
+        self, user_input: Dict[str, Any] | None = None
     ) -> FlowResult:
         """Select which schedule to edit."""
         # Guard: Ensure schedules exist
@@ -596,7 +626,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def async_step_edit_schedule(
-        self, user_input: dict[str, Any] | None = None
+        self, user_input: Dict[str, Any] | None = None
     ) -> FlowResult:
         """Edit an existing schedule."""
         # Validate index bounds
@@ -778,7 +808,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def async_step_select_schedule_to_delete(
-        self, user_input: dict[str, Any] | None = None
+        self, user_input: Dict[str, Any] | None = None
     ) -> FlowResult:
         """Select which schedule to delete."""
         # Guard: Ensure schedules exist
@@ -815,7 +845,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         )
 
     async def async_step_confirm_delete(
-        self, user_input: dict[str, Any] | None = None
+        self, user_input: Dict[str, Any] | None = None
     ) -> FlowResult:
         """Confirm deletion of a schedule."""
         # Validate index bounds
