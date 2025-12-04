@@ -1,13 +1,36 @@
-"""The Heating Control integration with enhanced logging and error handling."""
+"""The Heating Control integration."""
 from __future__ import annotations
 
 import logging
+from pathlib import Path
+from typing import Any, Optional
+
+import voluptuous as vol
+
+from homeassistant.components import frontend, websocket_api
+try:  # Home Assistant 2024.4+ exposes StaticPathConfig
+    from homeassistant.components.http import StaticPathConfig
+except ImportError:  # pragma: no cover - older HA cores
+    StaticPathConfig = None  # type: ignore[assignment]
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv, device_registry as dr
 
-from .const import DOMAIN
+from .const import (
+    ATTR_ENTRY_ID,
+    ATTR_SCHEDULE_ID,
+    ATTR_SCHEDULE_NAME,
+    CONF_SCHEDULE_ENABLED,
+    DASHBOARD_CREATED_KEY,
+    DASHBOARD_ENTRY_ID_LENGTH,
+    DASHBOARD_ICON,
+    DASHBOARD_TITLE,
+    DASHBOARD_URL_PATH_TEMPLATE,
+    DOMAIN,
+    SERVICE_SET_SCHEDULE_ENABLED,
+)
 from .coordinator import HeatingControlCoordinator
 from .dashboard import SUPPORTS_DASHBOARD_STRATEGY
 
@@ -26,204 +49,98 @@ WS_REGISTERED_KEY = f"{DOMAIN}_ws_registered"
 FRONTEND_STATIC_PATH = f"/{DOMAIN}-frontend"
 FRONTEND_STRATEGY_SCRIPT = "dashboard-strategy.js"
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Heating Control from a config entry."""
-    try:
-        # Initialize coordinator
-        coordinator = HeatingControlCoordinator(hass, entry)
-        
-        # Set up event listeners for real-time updates
-        await coordinator._setup_event_listeners()
-        
-        # Perform initial data fetch
-        await coordinator.async_config_entry_first_refresh()
-        
-        # Store coordinator
-        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
-        
-        # Set up platforms
-        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-        
-        # Register services
-        await _register_services(hass)
-        
-        # Set up dashboard
-        await _setup_dashboard(hass, entry)
-        
-        # Set up entry update listener
-        entry.async_on_unload(entry.add_update_listener(async_reload_entry))
-        
-        _LOGGER.info("Heating Control integration setup complete")
-        return True
-        
-    except Exception as e:
-        _LOGGER.error("Failed to set up Heating Control: %s", e)
-        return False
+SET_SCHEDULE_SCHEMA = vol.Schema(
+    {
+        vol.Optional(ATTR_ENTRY_ID): cv.string,
+        vol.Optional(ATTR_SCHEDULE_ID): cv.string,
+        vol.Optional(ATTR_SCHEDULE_NAME): cv.string,
+        vol.Required(CONF_SCHEDULE_ENABLED): cv.boolean,
+    }
+)
 
-async def _validate_config_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Validate configuration entry."""
-    config = entry.options or entry.data
-    
-    # Validate climate devices exist
-    climate_devices = config.get("climate_devices", [])
-    for device_id in climate_devices:
-        if not hass.states.get(device_id):
-            _LOGGER.warning("Climate device %s not found", device_id)
-    
-    # Validate device trackers exist
-    device_trackers = config.get("device_trackers", [])
-    for tracker_id in device_trackers:
-        if tracker_id and not hass.states.get(tracker_id):
-            _LOGGER.warning("Device tracker %s not found", tracker_id)
-    
-    return True
 
-async def _register_services(hass: HomeAssistant):
-    """Register integration services."""
-    if hass.services.has_service(DOMAIN, SERVICE_SET_SCHEDULE_ENABLED):
-        return  # Already registered
-        
-    import voluptuous as vol
-    from homeassistant.helpers import config_validation as cv
-    
-    async def set_schedule_enabled(call):
-        """Service to enable/disable schedules."""
-        entry_id = call.data.get("entry_id")
-        schedule_id = call.data.get("schedule_id")
-        schedule_name = call.data.get("schedule_name")
-        enabled = call.data.get("enabled", True)
-        
-        # Find the coordinator
-        coordinator = None
-        if entry_id:
-            coordinator = hass.data[DOMAIN].get(entry_id)
-        else:
-            # Find first coordinator if no entry_id specified
-            for coord in hass.data[DOMAIN].values():
-                if hasattr(coord, 'config_entry'):
-                    coordinator = coord
-                    break
-        
-        if not coordinator:
-            _LOGGER.error("No heating control coordinator found")
-            return
-        
-        # Find and update schedule
-        config = coordinator.config_entry.options or coordinator.config_entry.data
-        schedules = config.get(CONF_SCHEDULES, [])
-        
-        for schedule in schedules:
-            if (schedule_id and schedule.get(CONF_SCHEDULE_ID) == schedule_id) or \
-               (schedule_name and schedule.get(CONF_SCHEDULE_NAME) == schedule_name):
-                schedule[CONF_SCHEDULE_ENABLED] = enabled
-                break
-        else:
-            _LOGGER.error("Schedule not found: %s", schedule_id or schedule_name)
-            return
-        
-        # Update config entry
-        hass.config_entries.async_update_entry(
-            coordinator.config_entry,
-            options={**config, CONF_SCHEDULES: schedules}
-        )
-        
-        # Force update
-        coordinator.force_update_on_next_refresh()
-        await coordinator.async_request_refresh()
-        
-        _LOGGER.info("Schedule %s %s", schedule_id or schedule_name, 
-                    "enabled" if enabled else "disabled")
-    
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_SET_SCHEDULE_ENABLED,
-        set_schedule_enabled,
-        schema=vol.Schema({
-            vol.Optional("entry_id"): cv.string,
-            vol.Optional("schedule_id"): cv.string,
-            vol.Optional("schedule_name"): cv.string,
-            vol.Required("enabled"): cv.boolean,
-        })
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate old config entries to new format with device support."""
+    _LOGGER.info(
+        "Migrating Heating Control config entry from version %s.%s to %s.%s",
+        entry.version,
+        entry.minor_version,
+        CONFIG_VERSION,
+        CONFIG_MINOR_VERSION,
     )
 
-async def _setup_dashboard(hass: HomeAssistant, entry: ConfigEntry):
-    """Set up dashboard with comprehensive error handling."""
-    try:
-        from .dashboard import HeatingControlDashboardStrategy
-        
-        # Check if dashboard strategy is supported
-        if not hasattr(hass.components, 'lovelace') or \
-           not hasattr(hass.components.lovelace, 'dashboard'):
-            _LOGGER.info("Dashboard strategy not supported in this Home Assistant version")
-            return
-        
-        strategy = HeatingControlDashboardStrategy()
-        dashboard_config = await strategy.async_generate_dashboard(hass, entry)
-        
-        if dashboard_config:
-            dashboard_url = f"/dashboard/heating-control-{entry.entry_id}"
-            
-            # Create dashboard
-            await hass.components.lovelace.async_create_dashboard(
-                url_path=f"heating-control-{entry.entry_id}",
-                require_admin=False,
-                sidebar_title="Heating Control",
-                sidebar_icon="mdi:thermostat",
-                config=dashboard_config
-            )
-            
-            # Store dashboard URL in config entry data
-            new_data = {**(entry.data or {}), "dashboard_url": dashboard_url}
-            hass.config_entries.async_update_entry(entry, data=new_data)
-            
-            _LOGGER.info("Dashboard created at %s", dashboard_url)
-        
-    except ImportError:
-        _LOGGER.info("Dashboard components not available")
-    except Exception as e:
-        _LOGGER.warning("Failed to create dashboard: %s", e)
+    # Version 1 -> 2: Remove old config and force reconfiguration
+    if entry.version == 1 or entry.version < CONFIG_VERSION:
+        _LOGGER.warning(
+            "Heating Control version 1 configuration is incompatible with version 2. "
+            "The integration will be removed and must be reconfigured to enable device support."
+        )
+        # Return False to remove the config entry
+        return False
+
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Heating Control from a config entry."""
+    coordinator = HeatingControlCoordinator(hass, entry)
+
+    await coordinator.async_config_entry_first_refresh()
+
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN][entry.entry_id] = coordinator
+
+    # Create device entry for this integration
+    device_registry = dr.async_get(hass)
+    device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, entry.entry_id)},
+        manufacturer="Heating Control",
+        model="Smart Heating Schedule",
+        name="Heating Control",
+    )
+
+    await _async_register_services(hass)
+    if SUPPORTS_DASHBOARD_STRATEGY:
+        await _async_register_ws_api(hass)
+        await _async_setup_frontend(hass)
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
+
+    # Auto-create dashboard if it doesn't exist
+    await _async_setup_dashboard(hass, entry)
+
+    return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    try:
-        # Unload platforms
-        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-        
-        if unload_ok:
-            # Remove coordinator
-            coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
-            if coordinator:
-                # Clean up any resources
-                coordinator._circuit_breaker_active = False
-                coordinator._presence_cache = None
-            
-            # Remove dashboard if it exists
-            dashboard_url = entry.data.get("dashboard_url")
-            if dashboard_url:
-                try:
-                    dashboard_id = dashboard_url.split("/")[-1]
-                    await hass.components.lovelace.async_delete_dashboard(dashboard_id)
-                    _LOGGER.info("Dashboard removed: %s", dashboard_url)
-                except Exception as e:
-                    _LOGGER.warning("Failed to remove dashboard: %s", e)
-            
-            # Remove services if no more entries
-            if not hass.data[DOMAIN]:
-                hass.services.async_remove(DOMAIN, SERVICE_SET_SCHEDULE_ENABLED)
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unload_ok:
+        entry_store = hass.data.get(DOMAIN)
+        if entry_store is not None:
+            entry_store.pop(entry.entry_id, None)
+            if not entry_store:
+                await _async_unregister_services(hass)
+                if SUPPORTS_DASHBOARD_STRATEGY:
+                    _teardown_frontend(hass)
                 hass.data.pop(DOMAIN, None)
-        
-        return unload_ok
-        
-    except Exception as e:
-        _LOGGER.error("Failed to unload Heating Control: %s", e)
-        return False
+
+        # Remove auto-created dashboard on integration removal
+        await _async_remove_dashboard(hass, entry)
+
+    return unload_ok
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload config entry."""
-    await async_unload_entry(hass, entry)
-    await async_setup_entry(hass, entry)
+    """Handle config entry options update by reloading the entry."""
+    _LOGGER.info("Configuration updated, reloading Heating Control entry")
+    await hass.config_entries.async_reload(entry.entry_id)
+
+    # Trigger dashboard refresh to show updated configuration
+    await _async_refresh_dashboard(hass, entry)
 
 
 async def _async_setup_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -577,36 +494,6 @@ async def _async_remove_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> No
     if not dashboard_url:
         # No dashboard was auto-created
         return
-
-    # Remove Lovelace dashboard registry entry and sidebar panel
-    try:
-        from homeassistant.components.lovelace import (
-            const as lovelace_const,
-            dashboard as lovelace_dashboard,
-        )
-
-        dashboards_collection = lovelace_dashboard.DashboardsCollection(hass)
-        await dashboards_collection.async_load()
-
-        # Locate the dashboard entry by url_path
-        item_id = None
-        for item in dashboards_collection.data.values():
-            if item.get(lovelace_const.CONF_URL_PATH) == dashboard_url:
-                item_id = item.get("id")
-                break
-
-        if item_id:
-            await dashboards_collection.async_delete_item(item_id)
-            _LOGGER.debug("Deleted Lovelace dashboard registry entry %s", item_id)
-
-        # Remove the built-in panel if present
-        frontend.async_remove_panel(hass, dashboard_url)
-    except Exception as err:  # pylint: disable=broad-except
-        _LOGGER.debug(
-            "Dashboard registry/panel removal failed for %s (non-critical): %s",
-            dashboard_url,
-            err,
-        )
 
     try:
         await hass.async_add_executor_job(

@@ -1,0 +1,45 @@
+# Heating Control - AI Assistant Rules
+
+## Project Context
+Home Assistant custom integration for automatic climate device control based on schedules, presence, and time-based rules.
+
+## Key Architecture
+- **Coordinator** (`coordinator.py`): 60-second evaluation cycles, schedule evaluation, device state management
+- **Controller** (`controller.py`): Direct climate device control (HVAC, temperature, fan mode)
+- **Config Flow** (`config_flow.py`): Multi-step schedule management UI
+- **Models** (`models.py`): Schedule and configuration data classes
+
+## Core Logic
+- Time-window based scheduling with many-to-many device relationships
+- When multiple schedules control same device: **highest temperature wins**
+- Presence-based activation using device trackers
+- Direct control (no automations needed)
+
+## Development Commands
+```bash
+# Run tests
+pytest
+
+# Run specific test
+pytest tests/test_config_flow_schedule_management.py
+
+# Install in HA
+# Copy custom_components/heating_control/ to HA config
+```
+
+## Code Patterns
+- Temperatures in Celsius (°C)
+- Time in HH:MM format (24-hour)
+- 60-second update cycles
+- State changes trigger immediate updates
+- Only send commands when state actually changes
+
+## Important Files
+- `coordinator.py` - Main evaluation and control logic
+- `controller.py` - Climate device commands
+- `config_flow.py` - UI configuration
+- `models.py` - Data structures
+- `const.py` - Configuration constants
+
+## Testing
+Comprehensive pytest suite in `tests/` directory covering schedule evaluation, time windows, temperature resolution, and state transitions.

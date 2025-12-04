@@ -6,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 import custom_components.heating_control.coordinator as coordinator_module
-from homeassistant.util import dt as dt_util
 from custom_components.heating_control.const import (
     CONF_AUTO_HEATING_ENABLED,
     CONF_CLIMATE_DEVICES,
@@ -51,8 +50,12 @@ def make_coordinator(hass: DummyHass, config: dict) -> HeatingControlCoordinator
 
 
 def freeze_time(monkeypatch, hour: int, minute: int):
-    frozen = real_datetime(2024, 1, 1, hour, minute, tzinfo=dt_util.UTC)
-    monkeypatch.setattr(coordinator_module.dt_util, "now", lambda: frozen)
+    class FakeDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return real_datetime(2024, 1, 1, hour, minute)
+
+    monkeypatch.setattr(coordinator_module, "datetime", FakeDateTime)
 
 
 def base_schedule(

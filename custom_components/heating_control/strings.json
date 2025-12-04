@@ -44,7 +44,9 @@
     "error": {
       "unknown": "Unexpected error occurred",
       "no_devices": "Please select at least one climate device",
-      "away_temp_without_mode": "Away temperature requires an away HVAC mode to be selected"
+      "away_temp_without_mode": "Away temperature requires an away HVAC mode to be selected",
+      "empty_schedule_name": "Schedule name cannot be empty",
+      "no_devices_selected": "Please select at least one device for this schedule"
     },
     "abort": {
       "already_configured": "Heating Control is already configured"
@@ -95,7 +97,9 @@
     "error": {
       "unknown": "Unexpected error occurred",
       "no_devices": "Please select at least one climate device",
-      "away_temp_without_mode": "Away temperature requires an away HVAC mode to be selected"
+      "away_temp_without_mode": "Away temperature requires an away HVAC mode to be selected",
+      "empty_schedule_name": "Schedule name cannot be empty",
+      "no_devices_selected": "Please select at least one device for this schedule"
     }
   }
 }

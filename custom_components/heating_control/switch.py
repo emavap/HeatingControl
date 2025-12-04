@@ -253,15 +253,14 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         self.async_write_ha_state()
 
     def _schedule_pending_clear(self) -> None:
-        """Ensure optimistic state is cleared even when refresh keeps failing."""
+        """Ensure optimistic state is cleared even when refresh keeps failing.
+
+        Timeout is set to 2x the coordinator update interval to allow for
+        one potentially slow update cycle before reverting optimistic state.
+        """
         self._cancel_pending_clear()
-        
-        # Use constant instead of magic number
-        timeout_seconds = max(
-            OPTIMISTIC_STATE_MIN_TIMEOUT, 
-            int(self.coordinator.update_interval.total_seconds() * OPTIMISTIC_STATE_TIMEOUT_MULTIPLIER)
-        )
-        
+        # Scale timeout with coordinator update interval (2x with 60s minimum)
+        timeout_seconds = max(60, int(self.coordinator.update_interval.total_seconds() * 2))
         self._pending_clear_unsub = async_call_later(
             self.hass,
             timeout_seconds,

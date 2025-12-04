@@ -15,6 +15,6 @@ class HeatingControlSmartHeatingStrategy {
 }
 
 customElements.define(
-  "ll-strategy-heating_control-smart-heating",
+  "ll-strategy-dashboard-heating_control-smart-heating",
   HeatingControlSmartHeatingStrategy
 );
