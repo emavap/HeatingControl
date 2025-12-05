@@ -128,9 +128,12 @@ DEFAULT_FINAL_SETTLE = 2  # Final wait after all commands to ensure device stabi
 SERVICE_CALL_TIMEOUT = 30
 
 # Maximum expected time for a complete update cycle
-# With 10 devices: 10 * (1s mode + 1s temp + 1s fan + 5s settle) ≈ 80s worst case
-# Set conservatively lower to catch stuck cycles early via watchdog diagnostics
-UPDATE_CYCLE_TIMEOUT = 50
+# Worst case per device: mode change (up to 30s timeout) + 5s settle + temp (30s) + fan (30s) + 2s final
+# With 10 devices transitioning: 10 * (30 + 5 + 30 + 30 + 2) ≈ 970s theoretical max
+# Realistic case: most commands succeed quickly (1-2s), only settle delays are guaranteed
+# With 10 devices: 10 * (2s mode + 5s settle + 2s temp + 2s fan + 2s final) ≈ 130s
+# Set to 120s to accommodate realistic worst case while still detecting actual stuck cycles
+UPDATE_CYCLE_TIMEOUT = 120
 
 # Time after which we consider the integration completely stuck (3 minutes)
 # This threshold should be significantly higher than normal operation time

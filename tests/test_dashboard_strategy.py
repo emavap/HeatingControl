@@ -94,8 +94,8 @@ def _build_hass(
         states=SimpleNamespace(get=lambda entity_id: state_map.get(entity_id)),
     )
 @pytest.mark.asyncio
-async def test_strategy_does_not_force_single_column_layout() -> None:
-    """Dashboard view should not be forced into a single column when rendered."""
+async def test_strategy_uses_panel_view_with_vertical_stack() -> None:
+    """Dashboard view should use panel mode with vertical-stack layout."""
     config_entry = DummyConfigEntry(
         "entry-one",
         options={
@@ -122,25 +122,21 @@ async def test_strategy_does_not_force_single_column_layout() -> None:
     result = await strategy.async_generate()
 
     view = result["views"][0]
-    assert "max_columns" not in view
+    # Panel view with vertical-stack
+    assert view.get("panel") is True
+    assert "cards" in view
+    assert len(view["cards"]) == 1
+    assert view["cards"][0]["type"] == "vertical-stack"
 
-    # First section is now Quick Status
-    quick_status_section = view["sections"][0]
-    assert quick_status_section["type"] == "grid"
-    assert quick_status_section["columns"] == 1
-    assert quick_status_section["title"] == "🏠 Quick Status"
-
-    # Second section is Climate Controls
-    climate_section = view["sections"][1]
-    assert climate_section["title"] == "🌡️ Climate Controls"
-    thermostat_grid = climate_section["cards"][0]
-    assert thermostat_grid["type"] == "grid"
-    assert thermostat_grid["columns"] == 1
+    # Get all cards from the vertical-stack
+    cards = view["cards"][0]["cards"]
+    # Should have: header, status grid, climate grid, device status, schedules
+    assert len(cards) >= 3  # At minimum: header, status, climate
 
 
 @pytest.mark.asyncio
-async def test_device_section_uses_multiple_columns_when_multiple_devices() -> None:
-    """Device section should use multiple columns when more than one climate device is configured."""
+async def test_climate_grid_uses_multiple_columns_when_multiple_devices() -> None:
+    """Climate grid should use multiple columns when more than one climate device is configured."""
     config_entry = DummyConfigEntry(
         "entry-two",
         options={
@@ -173,17 +169,24 @@ async def test_device_section_uses_multiple_columns_when_multiple_devices() -> N
 
     result = await strategy.async_generate()
 
-    # First section is Quick Status with horizontal-stack for responsive layout
-    quick_status_section = result["views"][0]["sections"][0]
-    assert quick_status_section["title"] == "🏠 Quick Status"
-    # Quick status uses horizontal-stack for its cards
-    status_stack = quick_status_section["cards"][0]
-    assert status_stack["type"] == "horizontal-stack"
+    view = result["views"][0]
+    assert view.get("panel") is True
+    cards = view["cards"][0]["cards"]
 
-    # Second section is Climate Controls with thermostat grid
-    climate_section = result["views"][0]["sections"][1]
-    assert climate_section["title"] == "🌡️ Climate Controls"
-    thermostat_grid = climate_section["cards"][0]
+    # Find the climate controls section (vertical-stack with markdown header)
+    climate_section = None
+    for card in cards:
+        if card.get("type") == "vertical-stack":
+            inner_cards = card.get("cards", [])
+            if inner_cards and inner_cards[0].get("type") == "markdown":
+                content = inner_cards[0].get("content", "")
+                if "Climate Controls" in content:
+                    climate_section = card
+                    break
+
+    assert climate_section is not None
+    # Second card in the section should be the grid
+    thermostat_grid = climate_section["cards"][1]
     assert thermostat_grid["type"] == "grid"
     assert thermostat_grid["columns"] > 1  # Multiple devices = multiple columns
 
@@ -257,13 +260,25 @@ async def test_device_cards_precede_schedule_cards_in_diagnostics_section() -> N
 
     result = await strategy.async_generate()
 
-    section_titles = [
-        section.get("title") for section in result["views"][0]["sections"]
-    ]
-    # New section titles use emojis
-    device_index = section_titles.index("📍 Device Status")
-    schedule_index = section_titles.index("📅 Schedules")
+    view = result["views"][0]
+    assert view.get("panel") is True
+    cards = view["cards"][0]["cards"]
 
+    # Find device status and schedule sections by their markdown headers
+    device_index = None
+    schedule_index = None
+    for i, card in enumerate(cards):
+        if card.get("type") == "vertical-stack":
+            inner_cards = card.get("cards", [])
+            if inner_cards and inner_cards[0].get("type") == "markdown":
+                content = inner_cards[0].get("content", "")
+                if "Device Status" in content:
+                    device_index = i
+                elif "Schedules" in content:
+                    schedule_index = i
+
+    assert device_index is not None, "Device Status section not found"
+    assert schedule_index is not None, "Schedules section not found"
     assert device_index < schedule_index
 
 
@@ -279,6 +294,7 @@ async def test_strategy_handles_missing_integration() -> None:
     result = await strategy.async_generate()
 
     view = result["views"][0]
+    # The _build_message method still uses sections for error messages
     message_card = view["sections"][0]["cards"][0]
     assert message_card["type"] == "markdown"
     assert "integration is not loaded" in message_card["content"]
@@ -305,19 +321,16 @@ async def test_empty_option_lists_override_data() -> None:
     result = await strategy.async_generate()
 
     view = result["views"][0]
-    sections = view["sections"]
-    # Now we have Quick Status + Climate Controls = 2 sections when no devices
-    assert len(sections) == 2
+    # Panel view with vertical-stack
+    assert view.get("panel") is True
+    cards = view["cards"][0]["cards"]
 
-    # First section is Quick Status
-    quick_status = sections[0]
-    assert quick_status["title"] == "🏠 Quick Status"
+    # Should have at least header and status grid
+    assert len(cards) >= 2
 
-    # Second section is Climate Controls with "no devices" message
-    climate_section = sections[1]
-    assert climate_section["title"] == "🌡️ Climate Controls"
-    message_card = climate_section["cards"][0]
-    assert message_card["type"] == "markdown"
-    assert "No climate devices" in message_card["content"]
+    # First card is header markdown
+    assert cards[0]["type"] == "markdown"
+    assert "Smart Heating" in cards[0]["content"]
 
-
+    # Second card is status grid (no climate section when no devices)
+    assert cards[1]["type"] in ("grid", "vertical-stack")

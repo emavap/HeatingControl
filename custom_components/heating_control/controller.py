@@ -62,12 +62,6 @@ class ClimateController:
             await self._apply_device(decision)
         return list(self._timed_out_devices)
 
-    def reset_history(self) -> None:
-        """Forget previously issued commands."""
-        self._history.clear()
-        self._timed_out_devices.clear()
-        self._force_refresh_devices.clear()
-
     async def _apply_device(self, decision: DeviceDecision) -> None:
         """Apply commands for a single climate device."""
         entity_id = decision.entity_id

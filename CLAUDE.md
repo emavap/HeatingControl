@@ -134,6 +134,8 @@ The controller tracks last command per entity and only sends changes:
 3. **Fan mode change**: Send `set_fan_mode` (if supported by device)
 4. **Final settle**: Wait 2s after HVAC mode changes
 
+**Performance optimization (2025-01)**: When schedules are enabled/disabled via the dashboard switch, the system intentionally does NOT reset controller history. The controller's change detection ensures only devices whose target state actually differs from the last command receive new commands. This prevents the "many seconds of freezing" issue where toggling a single schedule would cause ALL devices to receive commands with 7+ seconds of settle delays per device.
+
 ## Configuration Structure
 
 Configuration is stored in `config_entry.data` or `config_entry.options`:

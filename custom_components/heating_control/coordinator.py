@@ -36,7 +36,6 @@ from .const import (
     DEFAULT_SCHEDULE_END,
     DEFAULT_SCHEDULE_FAN_MODE,
     DEFAULT_SCHEDULE_HVAC_MODE,
-    DEFAULT_SCHEDULE_AWAY_HVAC_MODE,
     DEFAULT_SCHEDULE_START,
     DEFAULT_SCHEDULE_TEMPERATURE,
     DEFAULT_SETTLE_SECONDS,
@@ -119,7 +118,9 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             settle_seconds=DEFAULT_SETTLE_SECONDS,
             final_settle=DEFAULT_FINAL_SETTLE,
         )
-        self._previous_schedule_states: Optional[Dict[str, bool]] = None
+        # Track schedule states including settings (not just is_active)
+        # Key: schedule_id, Value: (is_active, hvac_mode, target_temp, target_fan)
+        self._previous_schedule_states: Optional[Dict[str, Tuple[bool, str, Optional[float], Optional[str]]]] = None
         self._previous_presence_state: Optional[bool] = None
         self._force_update = False
 
@@ -262,11 +263,25 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         return snapshot
 
     def _detect_state_transitions(self, snapshot: HeatingStateSnapshot) -> bool:
-        """Detect if any schedule states or presence changed."""
+        """Detect if any schedule states, settings, or presence changed.
+
+        Triggers control application when:
+        - Force update is requested (e.g., config change)
+        - First run (no previous state)
+        - Presence changed (anyone_home)
+        - Schedule activation changed (is_active)
+        - Schedule settings changed (hvac_mode, temperature, fan) for active schedules
+        - Schedule was added/removed
+        """
         if self._force_update:
             _LOGGER.info("Forced update requested")
             self._force_update = False
-            self._controller.reset_history()
+            # NOTE: We intentionally do NOT reset controller history here.
+            # The controller uses change detection to only send commands when
+            # the target state differs from previously sent commands.
+            # Resetting history would cause ALL devices to receive commands
+            # even when their target state hasn't changed, creating long
+            # delays (5s settle + 2s final per device).
             return True
 
         if (
@@ -285,17 +300,76 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             return True
 
         for schedule_id, decision in snapshot.schedule_decisions.items():
-            current_active = decision.is_active
-            previous_active = self._previous_schedule_states.get(schedule_id, False)
+            current_state = (
+                decision.is_active,
+                decision.hvac_mode,
+                decision.target_temp,
+                decision.target_fan,
+            )
+            previous_state = self._previous_schedule_states.get(schedule_id)
 
-            if current_active != previous_active:
+            if previous_state is None:
+                _LOGGER.info("Schedule '%s' was added", decision.name)
+                return True
+
+            prev_active, prev_mode, prev_temp, prev_fan = previous_state
+            curr_active = decision.is_active
+
+            if curr_active != prev_active:
                 _LOGGER.info(
                     "Schedule '%s' state changed: %s -> %s",
                     decision.name,
-                    previous_active,
-                    current_active,
+                    prev_active,
+                    curr_active,
                 )
                 return True
+
+            # Only check settings changes for active schedules
+            if curr_active:
+                if decision.hvac_mode != prev_mode:
+                    _LOGGER.info(
+                        "Schedule '%s' HVAC mode changed: %s -> %s",
+                        decision.name,
+                        prev_mode,
+                        decision.hvac_mode,
+                    )
+                    return True
+
+                # Compare temperatures with epsilon to avoid floating point issues
+                if prev_temp is None and decision.target_temp is not None:
+                    _LOGGER.info(
+                        "Schedule '%s' temperature set: %s",
+                        decision.name,
+                        decision.target_temp,
+                    )
+                    return True
+                if prev_temp is not None and decision.target_temp is None:
+                    _LOGGER.info(
+                        "Schedule '%s' temperature cleared",
+                        decision.name,
+                    )
+                    return True
+                if (
+                    prev_temp is not None
+                    and decision.target_temp is not None
+                    and abs(prev_temp - decision.target_temp) > 0.1
+                ):
+                    _LOGGER.info(
+                        "Schedule '%s' temperature changed: %.1f -> %.1f",
+                        decision.name,
+                        prev_temp,
+                        decision.target_temp,
+                    )
+                    return True
+
+                if decision.target_fan != prev_fan:
+                    _LOGGER.info(
+                        "Schedule '%s' fan mode changed: %s -> %s",
+                        decision.name,
+                        prev_fan,
+                        decision.target_fan,
+                    )
+                    return True
 
         for schedule_id in self._previous_schedule_states:
             if schedule_id not in snapshot.schedule_decisions:
@@ -305,10 +379,18 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         return False
 
     def _update_previous_states(self, snapshot: HeatingStateSnapshot) -> None:
-        """Update stored state for next cycle comparisons."""
+        """Update stored state for next cycle comparisons.
+
+        Stores full schedule state tuple: (is_active, hvac_mode, target_temp, target_fan)
+        """
         self._previous_presence_state = snapshot.anyone_home
         self._previous_schedule_states = {
-            schedule_id: decision.is_active
+            schedule_id: (
+                decision.is_active,
+                decision.hvac_mode,
+                decision.target_temp,
+                decision.target_fan,
+            )
             for schedule_id, decision in snapshot.schedule_decisions.items()
         }
 
@@ -459,6 +541,17 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         # A schedule ends when the LAST of its devices has a newer schedule take over
         derived: Dict[str, str] = {}
 
+        def circular_distance(start: int, end: int) -> int:
+            """Calculate distance from start to end in circular time (handles midnight wrap).
+
+            Example:
+                circular_distance(1320, 120) = 240  # 22:00 to 02:00 = 4 hours
+                circular_distance(480, 720) = 240   # 08:00 to 12:00 = 4 hours
+            """
+            if end >= start:
+                return end - start
+            return (MINUTES_PER_DAY - start) + end
+
         for schedule_id, (index, start_hm, start_minutes, devices) in schedule_info.items():
             if not devices:
                 # Schedule controls no devices, run 24/7
@@ -476,12 +569,17 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 # No end times found (shouldn't happen), default to 24/7
                 derived[schedule_id] = start_hm
             else:
-                # Use the LATEST end time so the schedule stays active for all devices
-                # This correctly handles wrapping: if ends are [180, 420], max=420
-                # But we need to consider wrap-around for "latest" calculation
-                # Actually, for multi-device, we want the one that lets schedule run longest
-                # With circular time, "latest" means the one furthest ahead in time from start
-                latest_end_minutes = max(end_times_minutes)
+                # Use the end time that gives the LONGEST duration from start.
+                # With circular time, we need to calculate the distance properly
+                # to handle midnight wrap correctly.
+                # Example: start=22:00, ends=[23:00 (60min), 02:00 (240min)]
+                #   23:00 is only 60 minutes from start
+                #   02:00 is 240 minutes from start (wraps past midnight)
+                #   So 02:00 is the "latest" end time.
+                latest_end_minutes = max(
+                    end_times_minutes,
+                    key=lambda e: circular_distance(start_minutes, e)
+                )
                 hours = latest_end_minutes // 60
                 mins = latest_end_minutes % 60
                 derived[schedule_id] = f"{hours:02d}:{mins:02d}"
@@ -490,14 +588,24 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
     @staticmethod
     def _is_time_in_schedule(now_hm: str, start_hm: str, end_hm: str) -> bool:
-        """Check if current time is within schedule."""
-        if start_hm == end_hm:
-            return True
+        """Check if current time is within schedule.
 
-        spans_midnight = end_hm < start_hm
-        if not spans_midnight:
-            return start_hm <= now_hm < end_hm
-        return now_hm >= start_hm or now_hm < end_hm
+        Uses minute-based comparison for robustness instead of string comparison.
+        String comparison can fail with non-zero-padded hours (e.g., "9:30" > "10:00").
+        """
+        now_m = _parse_time_to_minutes(now_hm, _LOGGER)
+        start_m = _parse_time_to_minutes(start_hm, _LOGGER)
+        end_m = _parse_time_to_minutes(end_hm, _LOGGER)
+
+        if start_m == end_m:
+            return True  # 24/7 schedule
+
+        if end_m > start_m:
+            # Normal schedule (e.g., 08:00 to 18:00)
+            return start_m <= now_m < end_m
+        else:
+            # Spans midnight (e.g., 22:00 to 06:00)
+            return now_m >= start_m or now_m < end_m
 
     def _calculate_heating_state(self) -> HeatingStateSnapshot:
         """Calculate the current heating state based on configuration."""
@@ -506,7 +614,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         now_hm = now.strftime("%H:%M")
 
         tracker_states, anyone_home, everyone_away = self._resolve_presence(config)
-        tracker_states = dict(tracker_states)
+        # Note: _resolve_presence already returns Dict[str, bool], no conversion needed
 
         auto_heating_enabled = config.get(CONF_AUTO_HEATING_ENABLED, True)
 
@@ -685,6 +793,20 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             )
 
             device_entities = schedule.get(CONF_SCHEDULE_DEVICES, [])
+
+            # Validate that schedule devices are in the configured climate devices list
+            configured_devices = set(config.get(CONF_CLIMATE_DEVICES, []))
+            unknown_devices = set(device_entities) - configured_devices
+            if unknown_devices:
+                _LOGGER.warning(
+                    "Schedule '%s' references devices not in climate_devices: %s. "
+                    "These devices will be ignored.",
+                    schedule_name,
+                    list(unknown_devices),
+                )
+                # Filter to only known devices
+                device_entities = [d for d in device_entities if d in configured_devices]
+
             schedule_temp_home = schedule.get(CONF_SCHEDULE_TEMPERATURE)
             if schedule_temp_home is None:
                 schedule_temp_home = DEFAULT_SCHEDULE_TEMPERATURE
