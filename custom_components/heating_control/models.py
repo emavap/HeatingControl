@@ -4,6 +4,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Mapping, Optional, Tuple
 
+__all__ = [
+    "ScheduleDecision",
+    "DeviceDecision",
+    "DiagnosticsSnapshot",
+    "HeatingStateSnapshot",
+]
+
 
 @dataclass(frozen=True)
 class ScheduleDecision:

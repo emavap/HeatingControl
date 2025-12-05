@@ -5,6 +5,8 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+__all__ = ["async_setup_entry", "async_unload_entry"]
+
 import voluptuous as vol
 
 from homeassistant.components import frontend, websocket_api

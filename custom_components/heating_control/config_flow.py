@@ -13,30 +13,35 @@ from homeassistant.helpers import selector
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
-    DOMAIN,
-    CONF_DEVICE_TRACKERS,
+    AWAY_HVAC_MODE_OPTIONS,
     CONF_AUTO_HEATING_ENABLED,
-    CONF_SCHEDULES,
-    CONF_SCHEDULE_ID,
-    CONF_SCHEDULE_NAME,
-    CONF_SCHEDULE_ENABLED,
-    CONF_SCHEDULE_START,
-    CONF_SCHEDULE_END,
-    CONF_SCHEDULE_ONLY_WHEN_HOME,
-    CONF_SCHEDULE_DEVICE_TRACKERS,
-    CONF_SCHEDULE_HVAC_MODE,
+    CONF_CLIMATE_DEVICES,
+    CONF_DEVICE_TRACKERS,
     CONF_SCHEDULE_AWAY_HVAC_MODE,
     CONF_SCHEDULE_AWAY_TEMPERATURE,
+    CONF_SCHEDULE_DEVICE_TRACKERS,
     CONF_SCHEDULE_DEVICES,
-    CONF_SCHEDULE_TEMPERATURE,
+    CONF_SCHEDULE_ENABLED,
+    CONF_SCHEDULE_END,
     CONF_SCHEDULE_FAN_MODE,
-    CONF_CLIMATE_DEVICES,
-    DEFAULT_SCHEDULE_START,
-    DEFAULT_SCHEDULE_END,
-    DEFAULT_SCHEDULE_TEMPERATURE,
-    DEFAULT_SCHEDULE_HVAC_MODE,
-    DEFAULT_SCHEDULE_FAN_MODE,
+    CONF_SCHEDULE_HVAC_MODE,
+    CONF_SCHEDULE_ID,
+    CONF_SCHEDULE_NAME,
+    CONF_SCHEDULE_ONLY_WHEN_HOME,
+    CONF_SCHEDULE_START,
+    CONF_SCHEDULE_TEMPERATURE,
+    CONF_SCHEDULES,
     DEFAULT_SCHEDULE_AWAY_HVAC_MODE,
+    DEFAULT_SCHEDULE_END,
+    DEFAULT_SCHEDULE_FAN_MODE,
+    DEFAULT_SCHEDULE_HVAC_MODE,
+    DEFAULT_SCHEDULE_START,
+    DEFAULT_SCHEDULE_TEMPERATURE,
+    DOMAIN,
+    HVAC_MODE_OPTIONS,
+    TEMPERATURE_MAX,
+    TEMPERATURE_MIN,
+    TEMPERATURE_STEP,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,6 +54,31 @@ def _extract_trackers(config: dict[str, Any] | None) -> list[str]:
 
     trackers = config.get(CONF_DEVICE_TRACKERS, [])
     return list(trackers)
+
+
+def _is_duplicate_schedule_name(
+    name: str,
+    schedules: list[dict[str, Any]],
+    exclude_index: int | None = None,
+) -> bool:
+    """Check if a schedule name already exists (case-insensitive).
+
+    Args:
+        name: The schedule name to check.
+        schedules: List of existing schedules.
+        exclude_index: Index to exclude from check (for edit operations).
+
+    Returns:
+        True if the name is a duplicate, False otherwise.
+    """
+    name_lower = name.casefold()
+    for i, schedule in enumerate(schedules):
+        if exclude_index is not None and i == exclude_index:
+            continue
+        existing_name = schedule.get(CONF_SCHEDULE_NAME, "")
+        if existing_name.casefold() == name_lower:
+            return True
+    return False
 
 
 def _detect_schedule_overlaps(schedules: list[dict[str, Any]]) -> list[str]:
@@ -220,6 +250,8 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             schedule_name = user_input.get(CONF_SCHEDULE_NAME, "").strip()
             if not schedule_name:
                 errors[CONF_SCHEDULE_NAME] = "empty_schedule_name"
+            elif _is_duplicate_schedule_name(schedule_name, self._pending_schedules):
+                errors[CONF_SCHEDULE_NAME] = "duplicate_schedule_name"
 
             # Validate at least one device is selected
             schedule_devices = user_input.get(CONF_SCHEDULE_DEVICES, [])
@@ -259,18 +291,6 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Create device options from available devices
         device_options = [{"label": device, "value": device} for device in self._selected_climate_entities]
 
-        hvac_options = [
-            {"label": "Heat", "value": "heat"},
-            {"label": "Cool", "value": "cool"},
-            {"label": "Heat/Cool", "value": "heat_cool"},
-            {"label": "Off", "value": "off"},
-            {"label": "Auto", "value": "auto"},
-            {"label": "Dry", "value": "dry"},
-            {"label": "Fan Only", "value": "fan_only"},
-        ]
-
-        away_hvac_options = [{"label": "Use home HVAC mode", "value": "inherit"}] + hvac_options
-
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_SCHEDULE_NAME): selector.TextSelector(),
@@ -280,13 +300,15 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     default=DEFAULT_SCHEDULE_HVAC_MODE,
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=hvac_options,
+                        options=HVAC_MODE_OPTIONS,
                         multiple=False,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 vol.Required(CONF_SCHEDULE_TEMPERATURE, default=DEFAULT_SCHEDULE_TEMPERATURE): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=35, step=0.5, unit_of_measurement="°C")
+                    selector.NumberSelectorConfig(
+                        min=TEMPERATURE_MIN, max=TEMPERATURE_MAX, step=TEMPERATURE_STEP, unit_of_measurement="°C"
+                    )
                 ),
                 vol.Required(CONF_SCHEDULE_FAN_MODE, default=DEFAULT_SCHEDULE_FAN_MODE): selector.TextSelector(),
                 vol.Optional(CONF_SCHEDULE_START, default=DEFAULT_SCHEDULE_START): selector.TimeSelector(),
@@ -296,13 +318,15 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
                 vol.Optional(CONF_SCHEDULE_AWAY_HVAC_MODE, default="inherit"): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=away_hvac_options,
+                        options=AWAY_HVAC_MODE_OPTIONS,
                         multiple=False,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 vol.Optional(CONF_SCHEDULE_AWAY_TEMPERATURE): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=35, step=0.5, unit_of_measurement="°C")
+                    selector.NumberSelectorConfig(
+                        min=TEMPERATURE_MIN, max=TEMPERATURE_MAX, step=TEMPERATURE_STEP, unit_of_measurement="°C"
+                    )
                 ),
                 vol.Optional(CONF_SCHEDULE_DEVICES, default=[]): selector.SelectSelector(
                     selector.SelectSelectorConfig(
@@ -509,6 +533,8 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
             schedule_name = user_input.get(CONF_SCHEDULE_NAME, "").strip()
             if not schedule_name:
                 errors[CONF_SCHEDULE_NAME] = "empty_schedule_name"
+            elif _is_duplicate_schedule_name(schedule_name, self._pending_schedules):
+                errors[CONF_SCHEDULE_NAME] = "duplicate_schedule_name"
 
             # Validate at least one device is selected
             schedule_devices = user_input.get(CONF_SCHEDULE_DEVICES, [])
@@ -547,18 +573,6 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
 
         device_options = [{"label": device, "value": device} for device in self._selected_climate_entities]
 
-        hvac_options = [
-            {"label": "Heat", "value": "heat"},
-            {"label": "Cool", "value": "cool"},
-            {"label": "Heat/Cool", "value": "heat_cool"},
-            {"label": "Off", "value": "off"},
-            {"label": "Auto", "value": "auto"},
-            {"label": "Dry", "value": "dry"},
-            {"label": "Fan Only", "value": "fan_only"},
-        ]
-
-        away_hvac_options = [{"label": "Use home HVAC mode", "value": "inherit"}] + hvac_options
-
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_SCHEDULE_NAME): selector.TextSelector(),
@@ -568,13 +582,15 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                     default=DEFAULT_SCHEDULE_HVAC_MODE,
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=hvac_options,
+                        options=HVAC_MODE_OPTIONS,
                         multiple=False,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 vol.Required(CONF_SCHEDULE_TEMPERATURE, default=DEFAULT_SCHEDULE_TEMPERATURE): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=35, step=0.5, unit_of_measurement="°C")
+                    selector.NumberSelectorConfig(
+                        min=TEMPERATURE_MIN, max=TEMPERATURE_MAX, step=TEMPERATURE_STEP, unit_of_measurement="°C"
+                    )
                 ),
                 vol.Required(CONF_SCHEDULE_FAN_MODE, default=DEFAULT_SCHEDULE_FAN_MODE): selector.TextSelector(),
                 vol.Optional(CONF_SCHEDULE_START, default=DEFAULT_SCHEDULE_START): selector.TimeSelector(),
@@ -584,13 +600,15 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                 ),
                 vol.Optional(CONF_SCHEDULE_AWAY_HVAC_MODE, default="inherit"): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=away_hvac_options,
+                        options=AWAY_HVAC_MODE_OPTIONS,
                         multiple=False,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
                 vol.Optional(CONF_SCHEDULE_AWAY_TEMPERATURE): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=35, step=0.5, unit_of_measurement="°C")
+                    selector.NumberSelectorConfig(
+                        min=TEMPERATURE_MIN, max=TEMPERATURE_MAX, step=TEMPERATURE_STEP, unit_of_measurement="°C"
+                    )
                 ),
                 vol.Optional(CONF_SCHEDULE_DEVICES, default=[]): selector.SelectSelector(
                     selector.SelectSelectorConfig(
@@ -670,6 +688,10 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                 schedule_name = user_input.get(CONF_SCHEDULE_NAME, "").strip()
                 if not schedule_name:
                     errors[CONF_SCHEDULE_NAME] = "empty_schedule_name"
+                elif _is_duplicate_schedule_name(
+                    schedule_name, self._pending_schedules, exclude_index=self._active_schedule_index
+                ):
+                    errors[CONF_SCHEDULE_NAME] = "duplicate_schedule_name"
 
                 # Validate at least one device is selected
                 schedule_devices = user_input.get(CONF_SCHEDULE_DEVICES, [])
@@ -723,16 +745,6 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         # Get current schedule data
         current_schedule = self._pending_schedules[self._active_schedule_index]
         device_options = [{"label": device, "value": device} for device in self._selected_climate_entities]
-        hvac_options = [
-            {"label": "Heat", "value": "heat"},
-            {"label": "Cool", "value": "cool"},
-            {"label": "Heat/Cool", "value": "heat_cool"},
-            {"label": "Off", "value": "off"},
-            {"label": "Auto", "value": "auto"},
-            {"label": "Dry", "value": "dry"},
-            {"label": "Fan Only", "value": "fan_only"},
-        ]
-        away_hvac_options = [{"label": "Use home HVAC mode", "value": "inherit"}] + hvac_options
 
         data_schema = vol.Schema(
             {
@@ -749,7 +761,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                     default=current_schedule.get(CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE)
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=hvac_options,
+                        options=HVAC_MODE_OPTIONS,
                         multiple=False,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
@@ -758,7 +770,9 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                     CONF_SCHEDULE_TEMPERATURE,
                     default=current_schedule.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE)
                 ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=35, step=0.5, unit_of_measurement="°C")
+                    selector.NumberSelectorConfig(
+                        min=TEMPERATURE_MIN, max=TEMPERATURE_MAX, step=TEMPERATURE_STEP, unit_of_measurement="°C"
+                    )
                 ),
                 vol.Required(
                     CONF_SCHEDULE_FAN_MODE,
@@ -773,7 +787,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                     default=current_schedule.get(CONF_SCHEDULE_AWAY_HVAC_MODE, "inherit")
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=away_hvac_options,
+                        options=AWAY_HVAC_MODE_OPTIONS,
                         multiple=False,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
@@ -782,7 +796,9 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                     CONF_SCHEDULE_AWAY_TEMPERATURE,
                     default=current_schedule.get(CONF_SCHEDULE_AWAY_TEMPERATURE)
                 ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(min=5, max=35, step=0.5, unit_of_measurement="°C")
+                    selector.NumberSelectorConfig(
+                        min=TEMPERATURE_MIN, max=TEMPERATURE_MAX, step=TEMPERATURE_STEP, unit_of_measurement="°C"
+                    )
                 ),
                 vol.Required(
                     CONF_SCHEDULE_ONLY_WHEN_HOME,

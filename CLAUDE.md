@@ -340,41 +340,6 @@ Added 4 comprehensive tests:
 
 **Impact**: Schedules with no valid per-schedule trackers now correctly use global presence detection, showing "Home required ✓" when someone is home based on global device trackers.
 
-### Dashboard Temperature History Feature (2025-01)
-
-**Feature**: Added 48-hour temperature history graph as the first section of the dashboard, showing both actual and target temperatures for all managed climate devices.
-
-**Implementation** (dashboard.py lines 221-266):
-
-New method `_build_temperature_history_card()` creates an ApexCharts card displaying:
-- **Actual temperature**: Current room temperature (always shown)
-- **Target temperature**: Desired setpoint (only shown when HVAC mode is heat/cool/heat_cool/auto)
-- **Time range**: 48 hours with 5-minute update interval
-- **Per-device series**: Separate lines for each climate entity
-
-The target temperature intelligently hides when devices are in modes where it's not relevant (off, fan_only, dry, etc.).
-
-**Requirements**: Requires [ApexCharts Card](https://github.com/RomRider/apexcharts-card) installed in Home Assistant (available via HACS). If not installed, dashboard shows error for history section only; all other features work normally.
-
-**Integration** (dashboard.py lines 94-107):
-- Added as first section on dashboard
-- Only displays when climate devices are configured
-- Heading: "Temperature History (48h)"
-
-**Dashboard Layout Changes**:
-- Removed forced single-column layout (`max_columns: 1`)
-- Reordered diagnostic cards: Device Status → Schedules (more logical hierarchy)
-- Dashboard now responsive: multi-column on wide screens, single-column on narrow
-
-**Test Coverage** (test_dashboard_strategy.py):
-
-Added/updated tests:
-- Updated all existing tests for new section ordering
-- Added validation for ApexCharts card structure
-- Added test for HVAC mode-based target temperature filtering
-
-**Validation**: All 61 tests pass.
-
 ## Code Patterns to Follow
 
 ### Error Handling in Config Flow

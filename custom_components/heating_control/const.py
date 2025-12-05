@@ -1,5 +1,71 @@
 """Constants for the Heating Control integration."""
 
+__all__ = [
+    # Domain
+    "DOMAIN",
+    # Configuration keys - Global
+    "CONF_DEVICE_TRACKERS",
+    "CONF_AUTO_HEATING_ENABLED",
+    # Configuration keys - Schedules
+    "CONF_SCHEDULES",
+    "CONF_SCHEDULE_ID",
+    "CONF_SCHEDULE_NAME",
+    "CONF_SCHEDULE_ENABLED",
+    "CONF_SCHEDULE_START",
+    "CONF_SCHEDULE_END",
+    "CONF_SCHEDULE_ONLY_WHEN_HOME",
+    "CONF_SCHEDULE_DEVICE_TRACKERS",
+    "CONF_SCHEDULE_HVAC_MODE",
+    "CONF_SCHEDULE_AWAY_HVAC_MODE",
+    "CONF_SCHEDULE_AWAY_TEMPERATURE",
+    "CONF_SCHEDULE_DEVICES",
+    "CONF_SCHEDULE_TEMPERATURE",
+    "CONF_SCHEDULE_FAN_MODE",
+    "CONF_CLIMATE_DEVICES",
+    # Default values
+    "DEFAULT_SCHEDULE_START",
+    "DEFAULT_SCHEDULE_END",
+    "DEFAULT_SCHEDULE_TEMPERATURE",
+    "DEFAULT_SCHEDULE_FAN_MODE",
+    "DEFAULT_SCHEDULE_HVAC_MODE",
+    "DEFAULT_SCHEDULE_AWAY_HVAC_MODE",
+    "TEMPERATURE_MIN",
+    "TEMPERATURE_MAX",
+    "TEMPERATURE_STEP",
+    "HVAC_MODE_OPTIONS",
+    "AWAY_HVAC_MODE_OPTIONS",
+    # Settle delays
+    "DEFAULT_SETTLE_SECONDS",
+    "DEFAULT_FINAL_SETTLE",
+    # Timeout values
+    "SERVICE_CALL_TIMEOUT",
+    "UPDATE_CYCLE_TIMEOUT",
+    "WATCHDOG_STUCK_THRESHOLD",
+    "TEMPERATURE_EPSILON",
+    # Sensor types
+    "BINARY_SENSOR_EVERYONE_AWAY",
+    "SENSOR_DECISION_DIAGNOSTICS",
+    # Update interval
+    "UPDATE_INTERVAL",
+    # Services
+    "SERVICE_SET_SCHEDULE_ENABLED",
+    "ATTR_ENTRY_ID",
+    "ATTR_SCHEDULE_ID",
+    "ATTR_SCHEDULE_NAME",
+    # Entity naming
+    "SCHEDULE_SWITCH_ENTITY_TEMPLATE",
+    "SCHEDULE_BINARY_ENTITY_TEMPLATE",
+    "DEVICE_BINARY_ENTITY_TEMPLATE",
+    "ENTITY_DECISION_DIAGNOSTICS",
+    "ENTITY_EVERYONE_AWAY",
+    # Dashboard
+    "DASHBOARD_TITLE",
+    "DASHBOARD_ICON",
+    "DASHBOARD_URL_PATH_TEMPLATE",
+    "DASHBOARD_CREATED_KEY",
+    "DASHBOARD_ENTRY_ID_LENGTH",
+]
+
 DOMAIN = "heating_control"
 
 # Configuration keys - Global
@@ -32,6 +98,25 @@ DEFAULT_SCHEDULE_TEMPERATURE = 20.0
 DEFAULT_SCHEDULE_FAN_MODE = "auto"
 DEFAULT_SCHEDULE_HVAC_MODE = "heat"
 DEFAULT_SCHEDULE_AWAY_HVAC_MODE = "off"
+
+# Temperature range for schedule configuration (°C)
+TEMPERATURE_MIN = 5.0
+TEMPERATURE_MAX = 35.0
+TEMPERATURE_STEP = 0.5
+
+# HVAC mode selector options for config flow
+HVAC_MODE_OPTIONS = [
+    {"label": "Heat", "value": "heat"},
+    {"label": "Cool", "value": "cool"},
+    {"label": "Heat/Cool", "value": "heat_cool"},
+    {"label": "Off", "value": "off"},
+    {"label": "Auto", "value": "auto"},
+    {"label": "Dry", "value": "dry"},
+    {"label": "Fan Only", "value": "fan_only"},
+]
+
+# Away HVAC mode includes inherit option
+AWAY_HVAC_MODE_OPTIONS = [{"label": "Use home HVAC mode", "value": "inherit"}] + HVAC_MODE_OPTIONS
 # Settle delays after HVAC mode changes (seconds)
 # Some devices need time to stabilize after mode changes before accepting temperature commands
 DEFAULT_SETTLE_SECONDS = 5  # Wait after HVAC mode change before sending temperature

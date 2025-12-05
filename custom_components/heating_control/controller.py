@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional
 
+__all__ = ["ClimateController"]
+
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceNotFound

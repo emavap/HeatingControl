@@ -8,6 +8,8 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+__all__ = ["HeatingControlCoordinator"]
+
 from homeassistant.const import STATE_HOME, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -371,8 +373,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             - living_room: [A@08:00, C@12:00]
 
             Derived end times:
-            - Schedule A: 10:00 (bedroom ends at 10:00, living_room at 12:00 → take latest: 12:00)
-              Actually, we take the LATEST, so A ends at 12:00
+            - Schedule A: 12:00 (bedroom ends at 10:00, living_room at 12:00 → take latest)
             - Schedule B: 23:59 (only schedule for bedroom after 10:00)
             - Schedule C: 23:59 (only schedule for living_room after 12:00)
 

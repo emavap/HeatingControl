@@ -105,14 +105,7 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
     def is_on(self) -> bool:
         """Return True if the schedule is enabled."""
         if self._pending_enabled_state is not None:
-            if self.coordinator.last_update_success is False:
-                # Coordinator update failed - clear optimistic state and update UI immediately
-                self._cancel_pending_clear()
-                self._pending_enabled_state = None
-                # Schedule state write to revert UI (can't call async_write_ha_state in property)
-                self.hass.async_create_task(self._async_revert_optimistic_state())
-            else:
-                return self._pending_enabled_state
+            return self._pending_enabled_state
 
         schedule = self._get_schedule_decision()
         if schedule:
@@ -194,7 +187,12 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
     def _handle_coordinator_update(self) -> None:
         """Clear any pending state overrides when fresh data arrives."""
         self._cancel_pending_clear()
-        self._pending_enabled_state = None
+        # Clear optimistic state on failed updates to revert UI to actual state
+        if self.coordinator.last_update_success is False and self._pending_enabled_state is not None:
+            self._pending_enabled_state = None
+        elif self.coordinator.last_update_success:
+            # Successful update - optimistic state no longer needed
+            self._pending_enabled_state = None
         # Invalidate config schedule cache on coordinator update
         self._cached_config_schedule = None
         super()._handle_coordinator_update()
@@ -272,8 +270,3 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         if self._pending_clear_unsub:
             self._pending_clear_unsub()
             self._pending_clear_unsub = None
-
-    async def _async_revert_optimistic_state(self) -> None:
-        """Revert optimistic state and update UI (called when coordinator update fails)."""
-        # This is called as a task from is_on property to write state without blocking
-        self.async_write_ha_state()
