@@ -1,4 +1,15 @@
-"""Dynamic Lovelace dashboard strategy for Heating Control."""
+"""Dynamic Lovelace dashboard strategy for Heating Control.
+
+This dashboard strategy generates a responsive Lovelace dashboard that works well
+on both large screens (desktop, tablets) and phones. The layout uses sections view
+with intelligent column counts based on content.
+
+Key features:
+- Quick status header for at-a-glance system state
+- Responsive thermostat cards that stack on phones
+- Condensed schedule cards with visual status indicators
+- Device-to-schedule mapping for easy troubleshooting
+"""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence
@@ -65,7 +76,14 @@ class HeatingControlDashboardStrategy(Strategy):
         super().__init__(hass, config or {})
 
     async def async_generate(self) -> Dict[str, Any]:
-        """Return the Lovelace dashboard configuration."""
+        """Return the Lovelace dashboard configuration.
+
+        The dashboard is organized for optimal viewing on all screen sizes:
+        - Quick Status: At-a-glance system state (presence, active schedules)
+        - Climate Controls: Thermostat cards for direct device control
+        - Device Status: Which schedule controls each device
+        - Schedules: Detailed schedule configuration and state
+        """
         coordinator = self._resolve_coordinator()
         if coordinator is None:
             return self._build_message(
@@ -84,20 +102,34 @@ class HeatingControlDashboardStrategy(Strategy):
             coordinator, CONF_DEVICE_TRACKERS
         )
 
+        # Build all card sections
+        quick_status_cards = self._build_quick_status_cards(snapshot, tracker_entities)
         device_cards = self._build_device_cards(climate_entities)
-        overview_cards = self._build_overview_cards(tracker_entities)
         device_status_cards = self._build_device_status_cards(
             snapshot, climate_entities
         )
         schedule_cards = self._build_schedule_cards(entry_id, snapshot)
+
         sections: List[Dict[str, Any]] = []
 
+        # Section 1: Quick Status - Overview at a glance
         sections.append(
             {
                 "type": "grid",
                 "columns": 1,
                 "square": False,
-                "title": "Aircos & Thermostats",
+                "title": "🏠 Quick Status",
+                "cards": quick_status_cards,
+            }
+        )
+
+        # Section 2: Climate Controls - Thermostat cards
+        sections.append(
+            {
+                "type": "grid",
+                "columns": 1,
+                "square": False,
+                "title": "🌡️ Climate Controls",
                 "cards": device_cards
                 or [
                     {
@@ -108,43 +140,26 @@ class HeatingControlDashboardStrategy(Strategy):
             }
         )
 
-        sections.append(
-            {
-                "type": "grid",
-                "columns": 2,
-                "square": False,
-                "title": "Smart Heating — Diagnostics",
-                "cards": overview_cards
-                or [
-                    {
-                        "type": "markdown",
-                        "content": (
-                            "Coordinator data not available yet. The view will populate after the "
-                            "next update cycle."
-                        ),
-                    }
-                ],
-            }
-        )
-
+        # Section 3: Device Status - What schedule controls each device
         if device_status_cards:
             sections.append(
                 {
                     "type": "grid",
-                    "columns": min(max(len(device_status_cards), 1), 2),
+                    "columns": min(max(len(device_status_cards), 1), 3),
                     "square": False,
-                    "title": "Device → Schedule Mapping",
+                    "title": "📍 Device Status",
                     "cards": device_status_cards,
                 }
             )
 
+        # Section 4: Schedules - Detailed schedule information
         if schedule_cards:
             sections.append(
                 {
                     "type": "grid",
-                    "columns": min(max(len(schedule_cards), 1), 2),
+                    "columns": min(max(len(schedule_cards), 1), 3),
                     "square": False,
-                    "title": "Schedules",
+                    "title": "📅 Schedules",
                     "cards": schedule_cards,
                 }
             )
@@ -218,78 +233,64 @@ class HeatingControlDashboardStrategy(Strategy):
 
         return schedule_ref
 
-    def _build_device_cards(
-        self, climate_entities: Sequence[str]
+    def _build_quick_status_cards(
+        self, snapshot, tracker_entities: Sequence[str]
     ) -> List[Dict[str, Any]]:
-        """Create thermostat cards for all climate devices."""
+        """Build a quick status overview for at-a-glance system state.
+
+        This section provides immediate visibility into:
+        - Presence status (home/away)
+        - Active schedule count
+        - System diagnostics
+        """
         cards: List[Dict[str, Any]] = []
 
-        for entity in climate_entities:
-            cards.append(
-                {
-                    "type": "thermostat",
-                    "entity": entity,
-                    "name": self._friendly_name(entity),
-                }
-            )
+        # Build status summary
+        diagnostics = getattr(snapshot, "diagnostics", None) if snapshot else None
+        anyone_home = getattr(snapshot, "anyone_home", True) if snapshot else True
 
-        if cards:
-            column_count = min(max(len(cards), 1), 3)
-            return [
-                {
-                    "type": "grid",
-                    "columns": column_count,
-                    "square": False,
-                    "cards": cards,
-                }
-            ]
-        return []
+        # Presence indicator
+        presence_icon = "mdi:home-account" if anyone_home else "mdi:home-outline"
+        presence_text = "Someone Home" if anyone_home else "Everyone Away"
 
-    def _build_overview_cards(
-        self,
-        tracker_entities: Sequence[str],
-    ) -> List[Dict[str, Any]]:
-        """Create high-level diagnostic entities and controls."""
-        cards: List[Dict[str, Any]] = []
+        # Schedule summary
+        active_schedules = 0
+        total_schedules = 0
+        active_devices = 0
+        if diagnostics:
+            active_schedules = getattr(diagnostics, "active_schedules", 0)
+            total_schedules = getattr(diagnostics, "schedule_count", 0)
+            active_devices = getattr(diagnostics, "active_devices", 0)
 
-        status_entities = [
+        # Build a horizontal-stack for phone-friendly quick glance
+        status_cards: List[Dict[str, Any]] = [
             {
-                "entity": ENTITY_DECISION_DIAGNOSTICS,
-                "name": "Decision diagnostics",
-            },
-            {
+                "type": "tile",
                 "entity": ENTITY_EVERYONE_AWAY,
-                "name": "Everyone away",
+                "name": presence_text,
+                "icon": presence_icon,
+                "color": "green" if anyone_home else "grey",
+                "vertical": True,
             },
         ]
 
-        cards.append(
+        # Active schedules indicator as markdown (tile doesn't support custom text)
+        schedule_status = f"**{active_schedules}** of **{total_schedules}**"
+        device_status = f"**{active_devices}** device{'s' if active_devices != 1 else ''}"
+
+        status_cards.append(
             {
-                "type": "entities",
-                "title": "Heating Control Status",
-                "entities": status_entities,
+                "type": "markdown",
+                "content": f"### 📅 Schedules\n{schedule_status} active\n\n### 🌡️ Devices\n{device_status} controlled",
             }
         )
 
-        if tracker_entities:
-            cards.append(
-                {
-                    "type": "entities",
-                    "title": "Presence trackers",
-                    "entities": [
-                        {
-                            "entity": tracker_entity,
-                            "name": self._friendly_name(tracker_entity),
-                        }
-                        for tracker_entity in tracker_entities
-                    ],
-                }
-            )
-
-        cards.append(
+        # Refresh button
+        status_cards.append(
             {
                 "type": "button",
-                "name": "Refresh decisions",
+                "entity": ENTITY_DECISION_DIAGNOSTICS,
+                "name": "Refresh",
                 "icon": "mdi:refresh",
                 "show_state": False,
                 "tap_action": {
@@ -302,12 +303,79 @@ class HeatingControlDashboardStrategy(Strategy):
             }
         )
 
+        # Wrap in horizontal stack for side-by-side layout
+        cards.append(
+            {
+                "type": "horizontal-stack",
+                "cards": status_cards,
+            }
+        )
+
+        # Presence trackers (collapsible on mobile via entities card)
+        if tracker_entities:
+            tracker_items = [
+                {
+                    "entity": tracker_entity,
+                    "name": self._friendly_name(tracker_entity),
+                }
+                for tracker_entity in tracker_entities
+            ]
+            cards.append(
+                {
+                    "type": "entities",
+                    "title": "Presence Trackers",
+                    "entities": tracker_items,
+                    "state_color": True,
+                }
+            )
+
         return cards
+
+    def _build_device_cards(
+        self, climate_entities: Sequence[str]
+    ) -> List[Dict[str, Any]]:
+        """Create thermostat cards for all climate devices.
+
+        Uses a responsive grid that adapts to screen size:
+        - 1 device: single column (full width on phones)
+        - 2-3 devices: 2 columns (stacks on phones)
+        - 4+ devices: 3 columns max
+        """
+        cards: List[Dict[str, Any]] = []
+
+        for entity in climate_entities:
+            cards.append(
+                {
+                    "type": "thermostat",
+                    "entity": entity,
+                    "name": self._friendly_name(entity),
+                }
+            )
+
+        if cards:
+            # Responsive column count: max 3 for large screens
+            # Home Assistant sections view auto-stacks on phones
+            column_count = min(max(len(cards), 1), 3)
+            return [
+                {
+                    "type": "grid",
+                    "columns": column_count,
+                    "square": False,
+                    "cards": cards,
+                }
+            ]
+        return []
 
     def _build_device_status_cards(
         self, snapshot, climate_entities: Sequence[str]
     ) -> List[Dict[str, Any]]:
-        """Build cards showing which schedule controls each device."""
+        """Build compact cards showing which schedule controls each device.
+
+        Each card shows:
+        - Device name and climate entity control
+        - Active schedule (if any)
+        - Current mode, target temp, and status with visual indicators
+        """
         if not snapshot or not snapshot.device_decisions:
             return []
 
@@ -329,14 +397,12 @@ class HeatingControlDashboardStrategy(Strategy):
             )
 
             if not device_decision:
-                # Device has no decision
+                # Device has no decision - show as idle
                 entities.append(
                     {
-                        "type": "attribute",
-                        "entity": device_entity,
-                        "attribute": "temperature",
-                        "name": "Status",
-                        "suffix": " - No schedule",
+                        "type": "text",
+                        "name": "Schedule",
+                        "text": "⏸️ No active schedule",
                     }
                 )
             elif device_decision.active_schedules:
@@ -348,80 +414,68 @@ class HeatingControlDashboardStrategy(Strategy):
                 target_fan = device_decision.target_fan
                 is_active = device_decision.should_be_active
 
-                # Active schedule
+                # Mode icons for visual scanning
+                mode_icons = {
+                    "heat": "🔥",
+                    "cool": "❄️",
+                    "heat_cool": "🔄",
+                    "auto": "🔄",
+                    "off": "⏹️",
+                    "fan_only": "💨",
+                    "dry": "💧",
+                }
+                mode_icon = mode_icons.get(hvac_mode.lower(), "")
+
+                # Status indicator
+                status_icon = "✅" if is_active else "⏸️"
+
+                # Combined schedule + status line
                 entities.append(
                     {
                         "type": "text",
-                        "name": "Active Schedule",
-                        "text": schedule_name,
+                        "name": "Schedule",
+                        "text": f"{status_icon} {schedule_name}",
                     }
                 )
 
-                # Status
-                status_value = "Active" if is_active else "Inactive"
+                # Mode and temperature in one line
+                temp_str = f" → {target_temp:g}°C" if target_temp is not None else ""
+                fan_str = f" • {target_fan}" if target_fan else ""
                 entities.append(
                     {
                         "type": "text",
-                        "name": "Status",
-                        "text": status_value,
+                        "name": "Target",
+                        "text": f"{mode_icon} {hvac_mode.title()}{temp_str}{fan_str}",
                     }
                 )
 
-                # HVAC Mode
-                entities.append(
-                    {
-                        "type": "text",
-                        "name": "Mode",
-                        "text": hvac_mode.title(),
-                    }
-                )
-
-                # Target Temperature
-                if target_temp is not None:
-                    entities.append(
-                        {
-                            "type": "text",
-                            "name": "Target Temperature",
-                            "text": f"{target_temp:g}°C",
-                        }
-                    )
-
-                # Current Temperature (from climate entity attribute)
+                # Current temperature from device
                 entities.append(
                     {
                         "type": "attribute",
                         "entity": device_entity,
                         "attribute": "current_temperature",
-                        "name": "Current Temperature",
+                        "name": "Current",
                         "suffix": "°C",
                     }
                 )
-
-                # Fan Mode
-                if target_fan:
-                    entities.append(
-                        {
-                            "type": "text",
-                            "name": "Fan Mode",
-                            "text": target_fan,
-                        }
-                    )
             else:
                 # No active schedule
                 entities.append(
                     {
                         "type": "text",
-                        "name": "Status",
-                        "text": "No active schedule",
+                        "name": "Schedule",
+                        "text": "⏸️ Idle",
                     }
                 )
 
-            # Create an entities card for this device
+            # Create a compact entities card for this device
             device_entity_cards.append(
                 {
                     "type": "entities",
                     "title": device_name,
                     "entities": entities,
+                    "state_color": True,
                 }
             )
 
@@ -430,7 +484,14 @@ class HeatingControlDashboardStrategy(Strategy):
     def _build_schedule_cards(
         self, entry_id: str, snapshot
     ) -> List[Dict[str, Any]]:
-        """Build interactive cards for each configured schedule."""
+        """Build compact, phone-friendly cards for each configured schedule.
+
+        Each card shows essential info with visual status indicators:
+        - Enable/disable toggle
+        - Time window with visual status
+        - Mode settings (home/away)
+        - Devices being controlled
+        """
         if not snapshot or not snapshot.schedule_decisions:
             return []
 
@@ -439,7 +500,6 @@ class HeatingControlDashboardStrategy(Strategy):
         if snapshot.device_decisions:
             for device_entity, device_decision in snapshot.device_decisions.items():
                 if device_decision.active_schedules:
-                    # active_schedules is a tuple, usually with one schedule name
                     for schedule_name in device_decision.active_schedules:
                         schedule_to_controlling_devices.setdefault(
                             schedule_name, []
@@ -450,13 +510,18 @@ class HeatingControlDashboardStrategy(Strategy):
         for decision in snapshot.schedule_decisions.values():
             switch_entity = self._schedule_switch_entity(entry_id, decision.schedule_id)
 
-            display_name = decision.name
-            if decision.start_time == decision.end_time:
-                time_caption = "All day"
-            else:
-                time_caption = f"{decision.start_time} → {decision.end_time}"
+            # Build title with status indicator
+            status_icon = self._get_schedule_status_icon(decision)
+            display_name = f"{status_icon} {decision.name}"
 
-            # Determine how many devices are actually controlled by this schedule
+            # Time window
+            if decision.start_time == decision.end_time:
+                time_caption = "🕐 All day"
+            else:
+                window_icon = "🟢" if decision.in_time_window else "⚪"
+                time_caption = f"{window_icon} {decision.start_time} → {decision.end_time}"
+
+            # Controlling devices
             controlling_devices = schedule_to_controlling_devices.get(
                 decision.name, []
             )
@@ -469,163 +534,130 @@ class HeatingControlDashboardStrategy(Strategy):
                 },
                 {
                     "type": "text",
-                    "name": "Time Window",
+                    "name": "Time",
                     "text": time_caption,
                 },
             ]
 
-            window_state = "Open" if decision.in_time_window else "Closed"
-            card_entities.append(
-                {
-                    "type": "text",
-                    "name": "Window",
-                    "text": window_state,
-                }
-            )
-
+            # Build compact status line
+            status_parts: List[str] = []
             if not decision.enabled:
-                status_text = "Disabled"
+                status_parts.append("⏹️ Disabled")
             elif decision.is_active and controlling_count > 0:
-                status_text = "Active"
+                status_parts.append("✅ Active")
             elif decision.is_active:
-                status_text = "Active window • superseded"
+                status_parts.append("🔄 Superseded")
             elif decision.in_time_window:
-                status_text = "Window open"
+                status_parts.append("⏳ Window open")
             else:
-                status_text = "Idle"
+                status_parts.append("⏸️ Idle")
 
-            if (
-                decision.only_when_home
-                and not decision.presence_ok
-                and decision.enabled
-            ):
-                status_text += " • waiting for presence"
+            # Presence status
+            if decision.only_when_home:
+                if decision.presence_ok:
+                    status_parts.append("🏠 Home ✓")
+                elif decision.enabled:
+                    status_parts.append("🏠 Waiting")
 
             card_entities.append(
                 {
                     "type": "text",
                     "name": "Status",
-                    "text": status_text,
+                    "text": " • ".join(status_parts),
                 }
             )
 
-            presence_parts: List[str] = []
-            if decision.only_when_home:
-                presence_part = "Home required"
-                if decision.presence_ok:
-                    presence_part += " ✓"
-                elif decision.enabled:
-                    presence_part += " ✖"
-                presence_parts.append(presence_part)
+            # Mode icons for visual scanning
+            mode_icons = {
+                "heat": "🔥",
+                "cool": "❄️",
+                "heat_cool": "🔄",
+                "auto": "🔄",
+                "off": "⏹️",
+                "fan_only": "💨",
+                "dry": "💧",
+            }
 
-            if decision.schedule_device_trackers:
-                tracker_names = [
-                    self._friendly_name(tracker)
-                    for tracker in decision.schedule_device_trackers
-                ]
-                if len(tracker_names) <= 2:
-                    trackers_text = ", ".join(tracker_names)
-                else:
-                    trackers_text = f"{len(tracker_names)} trackers"
-                presence_parts.append(f"Trackers: {trackers_text}")
-
-            if presence_parts:
-                card_entities.append(
-                    {
-                        "type": "text",
-                        "name": "Presence",
-                        "text": " • ".join(presence_parts),
-                    }
-                )
-
+            # Combined mode line: Home and Away settings
+            mode_parts: List[str] = []
             if decision.hvac_mode_home:
-                home_text = decision.hvac_mode_home.title()
+                home_icon = mode_icons.get(decision.hvac_mode_home.lower(), "")
+                home_text = f"🏠 {home_icon}{decision.hvac_mode_home.title()}"
                 if decision.target_temp_home is not None:
-                    home_text += f" {decision.target_temp_home:g}°C"
-                card_entities.append(
-                    {
-                        "type": "text",
-                        "name": "Mode (Home)",
-                        "text": home_text,
-                    }
-                )
+                    home_text += f" {decision.target_temp_home:g}°"
+                mode_parts.append(home_text)
 
             if decision.hvac_mode_away:
-                away_text = decision.hvac_mode_away.title()
+                away_icon = mode_icons.get(decision.hvac_mode_away.lower(), "")
+                away_text = f"🚪 {away_icon}{decision.hvac_mode_away.title()}"
                 if decision.target_temp_away is not None:
-                    away_text += f" {decision.target_temp_away:g}°C"
+                    away_text += f" {decision.target_temp_away:g}°"
+                mode_parts.append(away_text)
+
+            if mode_parts:
                 card_entities.append(
                     {
                         "type": "text",
-                        "name": "Mode (Away)",
-                        "text": away_text,
+                        "name": "Mode",
+                        "text": " • ".join(mode_parts),
                     }
                 )
 
+            # Fan mode if set
             if decision.target_fan:
                 card_entities.append(
                     {
                         "type": "text",
-                        "name": "Fan Mode",
-                        "text": decision.target_fan,
+                        "name": "Fan",
+                        "text": f"💨 {decision.target_fan}",
                     }
                 )
 
+            # Devices: show what's being controlled
             if controlling_count > 0:
                 controlling_names = [
                     self._friendly_name(device) for device in controlling_devices
                 ]
                 if controlling_count <= 2:
-                    controlling_text = ", ".join(controlling_names)
+                    devices_text = f"✅ {', '.join(controlling_names)}"
                 else:
-                    controlling_text = f"{controlling_count} devices"
+                    devices_text = f"✅ {controlling_count} devices"
             else:
-                controlling_text = "None"
+                configured_count = decision.device_count
+                if configured_count > 0:
+                    devices_text = f"⏸️ {configured_count} device{'s' if configured_count != 1 else ''}"
+                else:
+                    devices_text = "—"
 
             card_entities.append(
                 {
                     "type": "text",
-                    "name": "Controlling",
-                    "text": controlling_text,
+                    "name": "Devices",
+                    "text": devices_text,
                 }
             )
-
-            configured_devices = getattr(decision, "devices", []) or []
-            if configured_devices:
-                configured_names = [
-                    self._friendly_name(device) for device in configured_devices
-                ]
-                if len(configured_names) <= 2:
-                    configured_text = ", ".join(configured_names)
-                else:
-                    configured_text = f"{len(configured_names)} devices"
-                card_entities.append(
-                    {
-                        "type": "text",
-                        "name": "Configured",
-                        "text": configured_text,
-                    }
-                )
-
-            detail_label = self._format_schedule_label(decision, controlling_devices)
-            if detail_label:
-                card_entities.append(
-                    {
-                        "type": "text",
-                        "name": "Details",
-                        "text": detail_label,
-                    }
-                )
 
             cards.append(
                 {
                     "type": "entities",
                     "title": display_name,
                     "entities": card_entities,
+                    "state_color": True,
                 }
             )
 
         return cards
+
+    def _get_schedule_status_icon(self, decision) -> str:
+        """Return a status icon for a schedule based on its current state."""
+        if not decision.enabled:
+            return "⏹️"
+        elif decision.is_active:
+            return "✅"
+        elif decision.in_time_window:
+            return "⏳"
+        else:
+            return "📅"
 
     @staticmethod
     def _schedule_binary_entity(entry_id: str, schedule_id: str) -> str:
@@ -642,82 +674,6 @@ class HeatingControlDashboardStrategy(Strategy):
             entry=slugify(entry_id),
             schedule=slugify(schedule_id),
         )
-
-    def _format_schedule_label(self, decision, controlling_devices: List[str]) -> str:
-        """Return a descriptive label for a schedule card."""
-        lines: List[str] = []
-
-        # Line 1: Time window and presence status
-        line1_parts: List[str] = []
-        window_status = "Window open" if decision.in_time_window else "Window closed"
-        line1_parts.append(window_status)
-
-        if decision.only_when_home:
-            presence_status = "Home required"
-            if decision.presence_ok:
-                presence_status += " ✓"
-            elif decision.enabled:
-                presence_status += " ❌"
-            line1_parts.append(presence_status)
-
-        if decision.schedule_device_trackers:
-            tracker_count = len(decision.schedule_device_trackers)
-            line1_parts.append(f"{tracker_count} tracker{'s' if tracker_count > 1 else ''}")
-
-        if line1_parts:
-            lines.append(" • ".join(line1_parts))
-
-        # Line 2: HVAC modes and temperatures
-        line2_parts: List[str] = []
-        hvac_info = f"🏠 {decision.hvac_mode_home.title()}"
-        if decision.target_temp_home is not None:
-            hvac_info += f" {decision.target_temp_home}°"
-        line2_parts.append(hvac_info)
-
-        if decision.hvac_mode_away:
-            away_info = f"🚪 {decision.hvac_mode_away.title()}"
-            if decision.target_temp_away is not None:
-                away_info += f" {decision.target_temp_away}°"
-            line2_parts.append(away_info)
-
-        if line2_parts:
-            lines.append(" • ".join(line2_parts))
-
-        # Line 3: Fan mode and device status
-        line3_parts: List[str] = []
-        if decision.target_fan:
-            line3_parts.append(f"Fan: {decision.target_fan}")
-
-        # Show controlling vs configured devices
-        controlling_count = len(controlling_devices)
-        configured_count = decision.device_count
-
-        if controlling_count > 0:
-            # Show which devices are being controlled
-            controlling_names = [self._friendly_name(dev) for dev in controlling_devices]
-            if len(controlling_names) <= 2:
-                line3_parts.append(f"Controlling: {', '.join(controlling_names)}")
-            else:
-                line3_parts.append(f"Controlling {controlling_count} devices")
-        elif configured_count > 0 and decision.is_active:
-            # Configured for devices but not controlling them (superseded)
-            configured_names = [self._friendly_name(dev) for dev in decision.devices]
-            if len(configured_names) <= 2:
-                line3_parts.append(f"Configured: {', '.join(configured_names)} (superseded)")
-            else:
-                line3_parts.append(f"Configured for {configured_count} devices (superseded)")
-        elif configured_count > 0:
-            # Not active, just show configured devices
-            configured_names = [self._friendly_name(dev) for dev in decision.devices]
-            if len(configured_names) <= 2:
-                line3_parts.append(f"Configured: {', '.join(configured_names)}")
-            else:
-                line3_parts.append(f"{configured_count} devices")
-
-        if line3_parts:
-            lines.append(" • ".join(line3_parts))
-
-        return "\n".join(lines)
 
     @staticmethod
     def _device_binary_entity(entry_id: str, climate_entity: str) -> str:

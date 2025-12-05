@@ -124,19 +124,18 @@ async def test_strategy_does_not_force_single_column_layout() -> None:
     view = result["views"][0]
     assert "max_columns" not in view
 
-    airco_section = view["sections"][0]
-    assert airco_section["type"] == "grid"
-    assert airco_section["columns"] == 1
-    assert airco_section["title"] == "Aircos & Thermostats"
-    thermostat_grid = airco_section["cards"][0]
+    # First section is now Quick Status
+    quick_status_section = view["sections"][0]
+    assert quick_status_section["type"] == "grid"
+    assert quick_status_section["columns"] == 1
+    assert quick_status_section["title"] == "🏠 Quick Status"
+
+    # Second section is Climate Controls
+    climate_section = view["sections"][1]
+    assert climate_section["title"] == "🌡️ Climate Controls"
+    thermostat_grid = climate_section["cards"][0]
     assert thermostat_grid["type"] == "grid"
     assert thermostat_grid["columns"] == 1
-
-    diagnostics_section = view["sections"][1]
-    assert diagnostics_section["title"] == "Smart Heating — Diagnostics"
-    cards = diagnostics_section["cards"]
-    assert cards[0]["type"] == "entities"
-    assert any(card["type"] == "button" for card in cards)
 
 
 @pytest.mark.asyncio
@@ -174,19 +173,19 @@ async def test_device_section_uses_multiple_columns_when_multiple_devices() -> N
 
     result = await strategy.async_generate()
 
-    # First section is airco
-    airco_section = result["views"][0]["sections"][0]
-    thermostat_grid = airco_section["cards"][0]
-    assert thermostat_grid["type"] == "grid"
-    assert thermostat_grid["columns"] > 1
+    # First section is Quick Status with horizontal-stack for responsive layout
+    quick_status_section = result["views"][0]["sections"][0]
+    assert quick_status_section["title"] == "🏠 Quick Status"
+    # Quick status uses horizontal-stack for its cards
+    status_stack = quick_status_section["cards"][0]
+    assert status_stack["type"] == "horizontal-stack"
 
-    diagnostics_section = result["views"][0]["sections"][1]
-    markdown_contents = [
-        card.get("content", "")
-        for card in diagnostics_section["cards"]
-        if card.get("type") == "markdown"
-    ]
-    assert not markdown_contents
+    # Second section is Climate Controls with thermostat grid
+    climate_section = result["views"][0]["sections"][1]
+    assert climate_section["title"] == "🌡️ Climate Controls"
+    thermostat_grid = climate_section["cards"][0]
+    assert thermostat_grid["type"] == "grid"
+    assert thermostat_grid["columns"] > 1  # Multiple devices = multiple columns
 
 
 @pytest.mark.asyncio
@@ -261,8 +260,9 @@ async def test_device_cards_precede_schedule_cards_in_diagnostics_section() -> N
     section_titles = [
         section.get("title") for section in result["views"][0]["sections"]
     ]
-    device_index = section_titles.index("Device → Schedule Mapping")
-    schedule_index = section_titles.index("Schedules")
+    # New section titles use emojis
+    device_index = section_titles.index("📍 Device Status")
+    schedule_index = section_titles.index("📅 Schedules")
 
     assert device_index < schedule_index
 
@@ -306,18 +306,18 @@ async def test_empty_option_lists_override_data() -> None:
 
     view = result["views"][0]
     sections = view["sections"]
+    # Now we have Quick Status + Climate Controls = 2 sections when no devices
     assert len(sections) == 2
 
-    airco_section = sections[0]
-    assert airco_section["title"] == "Aircos & Thermostats"
-    message_card = airco_section["cards"][0]
+    # First section is Quick Status
+    quick_status = sections[0]
+    assert quick_status["title"] == "🏠 Quick Status"
+
+    # Second section is Climate Controls with "no devices" message
+    climate_section = sections[1]
+    assert climate_section["title"] == "🌡️ Climate Controls"
+    message_card = climate_section["cards"][0]
     assert message_card["type"] == "markdown"
     assert "No climate devices" in message_card["content"]
-
-    diagnostics_cards = sections[1]["cards"]
-    assert not any(
-        isinstance(card, dict) and card.get("title") == "Presence trackers"
-        for card in diagnostics_cards
-    )
 
 
