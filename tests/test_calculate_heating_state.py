@@ -422,7 +422,8 @@ def test_schedule_without_end_uses_next_start(monkeypatch, dummy_hass: DummyHass
     assert evening_state.schedule_decisions["Evening"].end_time == "06:00"
 
 
-def test_single_schedule_without_end_covers_full_day(monkeypatch, dummy_hass: DummyHass):
+def test_single_schedule_without_end_runs_24_7(monkeypatch, dummy_hass: DummyHass):
+    """A single schedule with no end time should run 24/7 continuously."""
     config = {
         CONF_AUTO_HEATING_ENABLED: True,
         CONF_DEVICE_TRACKERS: [],
@@ -438,18 +439,25 @@ def test_single_schedule_without_end_covers_full_day(monkeypatch, dummy_hass: Du
         ],
     }
 
+    # Test during the day (after start time)
     freeze_time(monkeypatch, 10, 0)
     morning_state = make_coordinator(dummy_hass, config)._calculate_heating_state()
     assert morning_state.schedule_decisions["AllDay"].in_time_window is True
-    assert morning_state.schedule_decisions["AllDay"].end_time == "23:59"
+    # end_time = start_time means 24/7 (see _is_time_in_schedule)
+    assert morning_state.schedule_decisions["AllDay"].end_time == "08:00"
     decision_day = morning_state.device_decisions["climate.bedroom"]
     assert decision_day.active_schedules == ("AllDay",)
     assert decision_day.hvac_mode == "heat"
     assert decision_day.target_temp == 20.5
 
+    # Test overnight (before start time) - should STILL be active (24/7)
     freeze_time(monkeypatch, 2, 0)
     overnight_state = make_coordinator(dummy_hass, config)._calculate_heating_state()
-    assert overnight_state.schedule_decisions["AllDay"].in_time_window is False
+    assert overnight_state.schedule_decisions["AllDay"].in_time_window is True
+    overnight_decision = overnight_state.device_decisions["climate.bedroom"]
+    assert overnight_decision.active_schedules == ("AllDay",)
+    assert overnight_decision.hvac_mode == "heat"
+    assert overnight_decision.target_temp == 20.5
 
 
 def test_daily_schedule_flow(monkeypatch, dummy_hass: DummyHass):

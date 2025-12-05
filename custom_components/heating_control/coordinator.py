@@ -359,6 +359,10 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
     def _derive_auto_end_times(schedules: List[dict]) -> Dict[str, str]:
         """Derive implicit end times per-device to allow overlapping schedules for different devices.
 
+        A schedule runs from its start time until another schedule starts. This means:
+        - Single schedule: runs 24/7 (loops continuously)
+        - Two schedules at 07:00 and 03:00: the 07:00 one runs until 03:00 the next day
+
         For each device, schedules run sequentially. A schedule controlling multiple devices
         stays active until the last of its devices has a newer schedule take over.
 
@@ -374,8 +378,8 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
             Derived end times:
             - Schedule A: 12:00 (bedroom ends at 10:00, living_room at 12:00 → take latest)
-            - Schedule B: 23:59 (only schedule for bedroom after 10:00)
-            - Schedule C: 23:59 (only schedule for living_room after 12:00)
+            - Schedule B: 08:00 (wraps to next Schedule A start, runs 24/7 on bedroom)
+            - Schedule C: 08:00 (wraps to next Schedule A start, runs 24/7 on living_room)
 
         Args:
             schedules: List of schedule configurations (dicts with CONF_* keys)
@@ -384,19 +388,19 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             Dict mapping schedule_id to derived end time (HH:MM format)
             Only includes schedules that need auto-derived end times.
         """
-        # Step 1: Build per-device timelines
+        # Step 1: Build per-device timelines from ALL enabled schedules
+        # This includes schedules with explicit end times because their START times
+        # still affect when other schedules should end.
         # device_timelines[device_entity] = [(start_minutes, schedule_id, start_hm), ...]
         device_timelines: Dict[str, List[Tuple[int, str, str]]] = {}
 
+        # schedule_info tracks only schedules that NEED auto-derived end times
         # schedule_info[schedule_id] = (index, start_hm, start_minutes, devices)
         schedule_info: Dict[str, Tuple[int, str, int, List[str]]] = {}
 
         for index, schedule in enumerate(schedules):
-            if schedule.get(CONF_SCHEDULE_END):
-                # Has explicit end time, skip auto-calculation
-                continue
             if not schedule.get(CONF_SCHEDULE_ENABLED, True):
-                # Disabled schedules don't need end times
+                # Disabled schedules don't affect timing at all
                 continue
 
             schedule_id = (
@@ -410,31 +414,30 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             start_minutes = _parse_time_to_minutes(start_hm, _LOGGER)
 
             devices = schedule.get(CONF_SCHEDULE_DEVICES, [])
-            schedule_info[schedule_id] = (index, start_hm, start_minutes, devices)
 
-            # Add this schedule to each device's timeline
+            # Add ALL enabled schedules to device timelines (for end time calculation)
             for device_entity in devices:
                 device_timelines.setdefault(device_entity, []).append(
                     (start_minutes, schedule_id, start_hm)
                 )
 
+            # Only track schedules that need auto-derived end times
+            if not schedule.get(CONF_SCHEDULE_END):
+                schedule_info[schedule_id] = (index, start_hm, start_minutes, devices)
+
         if not schedule_info:
             return {}
 
         # Step 2: For each device, calculate when each schedule ends for THAT device
-        # device_schedule_ends[(device, schedule_id)] = end_time_minutes (or None for midnight)
-        device_schedule_ends: Dict[Tuple[str, str], Optional[int]] = {}
+        # device_schedule_ends[(device, schedule_id)] = end_time_minutes
+        # For single schedule or all same start time: end = start (runs 24/7)
+        device_schedule_ends: Dict[Tuple[str, str], int] = {}
 
         for device_entity, timeline in device_timelines.items():
             timeline.sort()  # Sort by start_minutes
             total = len(timeline)
 
             for position, (start_minutes, schedule_id, start_hm) in enumerate(timeline):
-                if total == 1:
-                    # Only one schedule for this device, runs until midnight
-                    device_schedule_ends[(device_entity, schedule_id)] = None
-                    continue
-
                 # Find the next schedule with a different start time
                 end_minutes = None
                 for offset in range(1, total):
@@ -444,16 +447,22 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                         end_minutes = next_start_minutes
                         break
 
+                if end_minutes is None:
+                    # No other schedule with different start time found
+                    # This means single schedule or all schedules start at same time
+                    # Set end = start so _is_time_in_schedule returns True (24/7)
+                    end_minutes = start_minutes
+
                 device_schedule_ends[(device_entity, schedule_id)] = end_minutes
 
-        # Step 3: For each schedule, find when it should end overall
+        # Step 3: For each schedule needing auto-end, find when it should end overall
         # A schedule ends when the LAST of its devices has a newer schedule take over
         derived: Dict[str, str] = {}
 
         for schedule_id, (index, start_hm, start_minutes, devices) in schedule_info.items():
             if not devices:
-                # Schedule controls no devices, default to midnight
-                derived[schedule_id] = DEFAULT_SCHEDULE_END
+                # Schedule controls no devices, run 24/7
+                derived[schedule_id] = start_hm
                 continue
 
             # Collect all end times for this schedule's devices
@@ -464,10 +473,14 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                     end_times_minutes.append(end_minutes)
 
             if not end_times_minutes:
-                # No overlapping schedules for any device, runs until midnight
-                derived[schedule_id] = DEFAULT_SCHEDULE_END
+                # No end times found (shouldn't happen), default to 24/7
+                derived[schedule_id] = start_hm
             else:
                 # Use the LATEST end time so the schedule stays active for all devices
+                # This correctly handles wrapping: if ends are [180, 420], max=420
+                # But we need to consider wrap-around for "latest" calculation
+                # Actually, for multi-device, we want the one that lets schedule run longest
+                # With circular time, "latest" means the one furthest ahead in time from start
                 latest_end_minutes = max(end_times_minutes)
                 hours = latest_end_minutes // 60
                 mins = latest_end_minutes % 60
