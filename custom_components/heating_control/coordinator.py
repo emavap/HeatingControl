@@ -18,6 +18,7 @@ from .const import (
     CONF_AUTO_HEATING_ENABLED,
     CONF_CLIMATE_DEVICES,
     CONF_DEVICE_TRACKERS,
+    CONF_DISABLED_DEVICES,
     CONF_SCHEDULES,
     CONF_SCHEDULE_DEVICES,
     CONF_SCHEDULE_DEVICE_TRACKERS,
@@ -917,11 +918,32 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         device_builders: Dict[str, List[Dict[str, Any]]],
         now_hm: str,
     ) -> Dict[str, DeviceDecision]:
-        """Create DeviceDecision objects for each configured device."""
+        """Create DeviceDecision objects for each configured device.
+
+        Disabled devices are excluded from automatic control - they will have
+        hvac_mode=None, which causes the controller to skip them entirely.
+        """
         all_devices = config.get(CONF_CLIMATE_DEVICES, [])
+        disabled_devices = set(config.get(CONF_DISABLED_DEVICES, []))
         device_decisions: Dict[str, DeviceDecision] = {}
 
         for device_entity in all_devices:
+            # Skip disabled devices - they won't be controlled by any schedule
+            if device_entity in disabled_devices:
+                _LOGGER.debug(
+                    "Device %s is disabled - skipping automatic control",
+                    device_entity,
+                )
+                device_decisions[device_entity] = DeviceDecision(
+                    entity_id=device_entity,
+                    should_be_active=False,
+                    active_schedules=tuple(),
+                    hvac_mode=None,  # None = controller leaves device untouched
+                    target_temp=None,
+                    target_fan=None,
+                )
+                continue
+
             entries = device_builders.get(device_entity, [])
 
             hvac_mode, target_temp, target_fan, schedule_name = self._select_device_targets(
@@ -1092,6 +1114,73 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         # Update config entry (callback method; no await needed)
         self.hass.config_entries.async_update_entry(
             config_entry, **update_kwargs
+        )
+
+        # Ensure the new configuration is applied immediately.
+        self._force_update = True
+        self.hass.async_create_task(self.async_refresh())
+
+    async def async_set_device_enabled(
+        self,
+        *,
+        device_entity_id: str,
+        enabled: bool,
+    ) -> None:
+        """Enable or disable automatic control for a device and persist the change.
+
+        When a device is disabled, it will not be controlled by any schedule.
+        The controller will leave the device untouched.
+
+        Args:
+            device_entity_id: The entity_id of the climate device
+            enabled: True to enable automatic control, False to disable
+        """
+        config_entry = self.config_entry
+        source = config_entry.options or config_entry.data
+        climate_devices = source.get(CONF_CLIMATE_DEVICES, [])
+
+        if device_entity_id not in climate_devices:
+            raise ValueError(f"Device '{device_entity_id}' is not configured for this entry")
+
+        disabled_devices = list(source.get(CONF_DISABLED_DEVICES, []))
+        is_currently_disabled = device_entity_id in disabled_devices
+
+        # enabled=True means device should NOT be in disabled list
+        # enabled=False means device SHOULD be in disabled list
+        should_be_disabled = not enabled
+
+        if is_currently_disabled == should_be_disabled:
+            _LOGGER.debug(
+                "Device %s already %s",
+                device_entity_id,
+                "disabled" if should_be_disabled else "enabled",
+            )
+            return
+
+        if should_be_disabled:
+            disabled_devices.append(device_entity_id)
+        else:
+            disabled_devices.remove(device_entity_id)
+
+        update_kwargs: Dict[str, Dict] = {}
+        if config_entry.options:
+            new_options = dict(config_entry.options)
+            new_options[CONF_DISABLED_DEVICES] = disabled_devices
+            update_kwargs["options"] = new_options
+        else:
+            new_data = dict(config_entry.data)
+            new_data[CONF_DISABLED_DEVICES] = disabled_devices
+            update_kwargs["data"] = new_data
+
+        # Update config entry (callback method; no await needed)
+        self.hass.config_entries.async_update_entry(
+            config_entry, **update_kwargs
+        )
+
+        _LOGGER.info(
+            "Device %s automatic control %s",
+            device_entity_id,
+            "enabled" if enabled else "disabled",
         )
 
         # Ensure the new configuration is applied immediately.

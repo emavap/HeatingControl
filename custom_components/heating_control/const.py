@@ -6,6 +6,7 @@ __all__ = [
     # Configuration keys - Global
     "CONF_DEVICE_TRACKERS",
     "CONF_AUTO_HEATING_ENABLED",
+    "CONF_DISABLED_DEVICES",
     # Configuration keys - Schedules
     "CONF_SCHEDULES",
     "CONF_SCHEDULE_ID",
@@ -49,13 +50,16 @@ __all__ = [
     "UPDATE_INTERVAL",
     # Services
     "SERVICE_SET_SCHEDULE_ENABLED",
+    "SERVICE_SET_DEVICE_ENABLED",
     "ATTR_ENTRY_ID",
     "ATTR_SCHEDULE_ID",
     "ATTR_SCHEDULE_NAME",
+    "ATTR_DEVICE_ENTITY_ID",
     # Entity naming
     "SCHEDULE_SWITCH_ENTITY_TEMPLATE",
     "SCHEDULE_BINARY_ENTITY_TEMPLATE",
     "DEVICE_BINARY_ENTITY_TEMPLATE",
+    "DEVICE_SWITCH_ENTITY_TEMPLATE",
     "ENTITY_DECISION_DIAGNOSTICS",
     "ENTITY_EVERYONE_AWAY",
     # Dashboard
@@ -71,6 +75,7 @@ DOMAIN = "heating_control"
 # Configuration keys - Global
 CONF_DEVICE_TRACKERS = "device_trackers"
 CONF_AUTO_HEATING_ENABLED = "automatic_heating_enabled"
+CONF_DISABLED_DEVICES = "disabled_devices"
 
 # Configuration keys - Schedules
 CONF_SCHEDULES = "schedules"
@@ -156,16 +161,19 @@ UPDATE_INTERVAL = 60
 
 # Services
 SERVICE_SET_SCHEDULE_ENABLED = "set_schedule_enabled"
+SERVICE_SET_DEVICE_ENABLED = "set_device_enabled"
 
 # Service attributes
 ATTR_ENTRY_ID = "entry_id"
 ATTR_SCHEDULE_ID = "schedule_id"
 ATTR_SCHEDULE_NAME = "schedule_name"
+ATTR_DEVICE_ENTITY_ID = "device_entity_id"
 
 # Entity naming
 SCHEDULE_SWITCH_ENTITY_TEMPLATE = "switch.heating_schedule_{entry}_{schedule}_enabled"
 SCHEDULE_BINARY_ENTITY_TEMPLATE = "binary_sensor.heating_schedule_{entry}_{schedule}_active"
 DEVICE_BINARY_ENTITY_TEMPLATE = "binary_sensor.heating_device_{entry}_{device}"
+DEVICE_SWITCH_ENTITY_TEMPLATE = "switch.heating_device_{entry}_{device}_enabled"
 # Entity IDs
 ENTITY_DECISION_DIAGNOSTICS = "sensor.heating_control_decision_diagnostics"
 ENTITY_EVERYONE_AWAY = "binary_sensor.heating_control_everyone_away"

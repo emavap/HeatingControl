@@ -1,7 +1,7 @@
-"""Switch entities for Heating Control schedules."""
+"""Switch entities for Heating Control schedules and devices."""
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
@@ -13,6 +13,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
 from .const import (
+    CONF_CLIMATE_DEVICES,
+    CONF_DISABLED_DEVICES,
     CONF_SCHEDULES,
     CONF_SCHEDULE_DEVICES,
     CONF_SCHEDULE_ENABLED,
@@ -26,6 +28,7 @@ from .const import (
     CONF_SCHEDULE_START,
     CONF_SCHEDULE_TEMPERATURE,
     DEFAULT_SCHEDULE_HVAC_MODE,
+    DEVICE_SWITCH_ENTITY_TEMPLATE,
     DOMAIN,
     SCHEDULE_SWITCH_ENTITY_TEMPLATE,
 )
@@ -37,14 +40,20 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up switch entities for Heating Control schedules."""
+    """Set up switch entities for Heating Control schedules and devices."""
     coordinator: HeatingControlCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities: list[ScheduleEnableSwitch] = []
+    entities: List[Union[ScheduleEnableSwitch, DeviceEnableSwitch]] = []
 
+    # Add schedule enable switches
     if coordinator.data:
         for schedule_id in coordinator.data.schedule_decisions:
             entities.append(ScheduleEnableSwitch(coordinator, entry, schedule_id))
+
+    # Add device enable switches
+    climate_devices = coordinator.config.get(CONF_CLIMATE_DEVICES, [])
+    for device_entity in climate_devices:
+        entities.append(DeviceEnableSwitch(coordinator, entry, device_entity))
 
     async_add_entities(entities)
 
@@ -258,6 +267,170 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         """
         self._cancel_pending_clear()
         # Scale timeout with coordinator update interval (2x with 60s minimum)
+        timeout_seconds = max(60, int(self.coordinator.update_interval.total_seconds() * 2))
+        self._pending_clear_unsub = async_call_later(
+            self.hass,
+            timeout_seconds,
+            self._clear_pending_state,
+        )
+
+    def _cancel_pending_clear(self) -> None:
+        """Cancel any scheduled optimistic-state reset."""
+        if self._pending_clear_unsub:
+            self._pending_clear_unsub()
+            self._pending_clear_unsub = None
+
+
+class DeviceEnableSwitch(CoordinatorEntity, SwitchEntity):
+    """Switch that enables or disables automatic control for a climate device.
+
+    When a device is disabled, it will not be controlled by any schedule.
+    This allows users to temporarily exclude specific devices from automatic control.
+    """
+
+    _attr_icon = "mdi:thermostat"
+    _attr_should_poll = False
+
+    def __init__(
+        self,
+        coordinator: HeatingControlCoordinator,
+        entry: ConfigEntry,
+        device_entity_id: str,
+    ) -> None:
+        """Initialise the switch."""
+        super().__init__(coordinator)
+        self._device_entity_id = device_entity_id
+        self._entry_id = entry.entry_id
+
+        slug_entry = slugify(entry.entry_id)
+        # Extract device name from entity_id (e.g., climate.bedroom_ac -> bedroom_ac)
+        device_slug = slugify(device_entity_id.replace("climate.", ""))
+
+        self.entity_id = DEVICE_SWITCH_ENTITY_TEMPLATE.format(
+            entry=slug_entry,
+            device=device_slug,
+        )
+        self._attr_unique_id = f"{entry.entry_id}_device_{device_entity_id}_enabled"
+        self._pending_enabled_state: Optional[bool] = None
+        self._pending_clear_unsub: Optional[Callable[[], None]] = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="Heating Control",
+            manufacturer="Heating Control",
+            model="Smart Heating Schedule",
+        )
+
+    @property
+    def name(self) -> str:
+        """Return the display name of the switch."""
+        device_name = self._friendly_device_name()
+        return f"Heating Device {device_name} Enabled"
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if the device is enabled for automatic control."""
+        if self._pending_enabled_state is not None:
+            return self._pending_enabled_state
+
+        # Device is enabled if NOT in the disabled list
+        disabled_devices = self.coordinator.config.get(CONF_DISABLED_DEVICES, [])
+        return self._device_entity_id not in disabled_devices
+
+    @property
+    def available(self) -> bool:
+        """Return whether the switch is available."""
+        # Available if device is in the configured climate devices
+        climate_devices = self.coordinator.config.get(CONF_CLIMATE_DEVICES, [])
+        return self._device_entity_id in climate_devices
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return additional metadata for the device."""
+        device_decision = None
+        if self.coordinator.data and self.coordinator.data.device_decisions:
+            device_decision = self.coordinator.data.device_decisions.get(
+                self._device_entity_id
+            )
+
+        attrs: Dict[str, Any] = {
+            "device_entity_id": self._device_entity_id,
+        }
+
+        if device_decision:
+            attrs.update({
+                "should_be_active": device_decision.should_be_active,
+                "active_schedules": list(device_decision.active_schedules),
+                "hvac_mode": device_decision.hvac_mode,
+                "target_temp": device_decision.target_temp,
+                "target_fan": device_decision.target_fan,
+            })
+
+        return attrs
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable automatic control for the device."""
+        await self.coordinator.async_set_device_enabled(
+            device_entity_id=self._device_entity_id,
+            enabled=True,
+        )
+        # Optimistically expose the new state until the coordinator refresh completes
+        self._pending_enabled_state = True
+        self._schedule_pending_clear()
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable automatic control for the device."""
+        await self.coordinator.async_set_device_enabled(
+            device_entity_id=self._device_entity_id,
+            enabled=False,
+        )
+        # Optimistically expose the new state until the coordinator refresh completes
+        self._pending_enabled_state = False
+        self._schedule_pending_clear()
+        self.async_write_ha_state()
+
+    def _handle_coordinator_update(self) -> None:
+        """Clear any pending state overrides when fresh data arrives."""
+        self._cancel_pending_clear()
+        # Clear optimistic state on failed updates to revert UI to actual state
+        if self.coordinator.last_update_success is False and self._pending_enabled_state is not None:
+            self._pending_enabled_state = None
+        elif self.coordinator.last_update_success:
+            # Successful update - optimistic state no longer needed
+            self._pending_enabled_state = None
+        super()._handle_coordinator_update()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up any scheduled callbacks."""
+        self._cancel_pending_clear()
+        await super().async_will_remove_from_hass()
+
+    def _friendly_device_name(self) -> str:
+        """Return a friendly name for the device."""
+        # Try to get the state object for a friendly name
+        state = self.hass.states.get(self._device_entity_id)
+        if state and state.attributes.get("friendly_name"):
+            return str(state.attributes["friendly_name"])
+
+        # Fall back to extracting from entity_id
+        name = self._device_entity_id.replace("climate.", "")
+        return name.replace("_", " ").title()
+
+    def _clear_pending_state(self, *_args: Any) -> None:
+        """Drop optimistic state if the coordinator never confirms."""
+        if self._pending_enabled_state is None:
+            return
+        self._pending_enabled_state = None
+        self._cancel_pending_clear()
+        self.async_write_ha_state()
+
+    def _schedule_pending_clear(self) -> None:
+        """Ensure optimistic state is cleared even when refresh keeps failing."""
+        self._cancel_pending_clear()
         timeout_seconds = max(60, int(self.coordinator.update_interval.total_seconds() * 2))
         self._pending_clear_unsub = async_call_later(
             self.hass,

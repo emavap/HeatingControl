@@ -91,6 +91,7 @@ Coordinator (_async_update_data)
 - Per-device binary sensors: shows if device should be active
 - Global sensors: diagnostics, presence state
 - Schedule switches: enable/disable individual schedules
+- Device switches: enable/disable automatic control per device (disabled devices are not controlled by any schedule)
 
 **`dashboard.py`** - Auto-generated Lovelace dashboard
 - `HeatingControlDashboardStrategy`: Generates single-column layout
@@ -145,6 +146,7 @@ Configuration is stored in `config_entry.data` or `config_entry.options`:
     "device_trackers": ["device_tracker.person1", "device_tracker.person2"],
     "automatic_heating_enabled": True,
     "climate_devices": ["climate.bedroom_ac", "climate.kitchen_ac"],
+    "disabled_devices": ["climate.kitchen_ac"],  # Devices excluded from automatic control
     "schedules": [
         {
             "id": "uuid-string",  # Unique identifier (preserved during edits)
