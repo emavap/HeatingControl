@@ -328,7 +328,7 @@ class DeviceEnableSwitch(CoordinatorEntity, SwitchEntity):
     def name(self) -> str:
         """Return the display name of the switch."""
         device_name = self._friendly_device_name()
-        return f"Heating Device {device_name} Enabled"
+        return f"{device_name} Auto Control"
 
     @property
     def is_on(self) -> bool:
