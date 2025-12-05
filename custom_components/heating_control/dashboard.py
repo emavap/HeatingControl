@@ -487,10 +487,17 @@ class HeatingControlDashboardStrategy(Strategy):
         return next(iter(domain_data.values()), None)
 
     def _friendly_name(self, entity_id: str) -> str:
-        """Return a Home Assistant friendly name for an entity id."""
+        """Return a Home Assistant friendly name for an entity id.
+
+        Checks multiple sources in order of preference:
+        1. State attributes (friendly_name) - most accurate when available
+        2. Entity registry (name or original_name) - available at boot before states
+        3. Slugified entity_id - fallback when nothing else is available
+        """
         if not entity_id:
             return ""
 
+        # Try state attributes first (most accurate when available)
         hass_states = getattr(self.hass, "states", None)
         if hass_states:
             state = hass_states.get(entity_id)
@@ -502,6 +509,21 @@ class HeatingControlDashboardStrategy(Strategy):
                 state_name = getattr(state, "name", None)
                 if isinstance(state_name, str) and state_name.strip():
                     return state_name
+
+        # Try entity registry (available earlier than states at boot)
+        try:
+            from homeassistant.helpers import entity_registry as er
+
+            registry = er.async_get(self.hass)
+            entry = registry.async_get(entity_id)
+            if entry:
+                # Prefer user-set name, then original name
+                if entry.name and entry.name.strip():
+                    return entry.name
+                if entry.original_name and entry.original_name.strip():
+                    return entry.original_name
+        except Exception:
+            pass  # Entity registry not available or other error
 
         # Fallback to a slugified title when no friendly name is available
         return entity_id.split(".", 1)[-1].replace("_", " ").title()

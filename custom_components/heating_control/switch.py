@@ -410,11 +410,31 @@ class DeviceEnableSwitch(CoordinatorEntity, SwitchEntity):
         await super().async_will_remove_from_hass()
 
     def _friendly_device_name(self) -> str:
-        """Return a friendly name for the device."""
+        """Return a friendly name for the device.
+
+        Checks multiple sources in order of preference:
+        1. State attributes (friendly_name) - most accurate when available
+        2. Entity registry (name or original_name) - available at boot before states
+        3. Slugified entity_id - fallback when nothing else is available
+        """
         # Try to get the state object for a friendly name
         state = self.hass.states.get(self._device_entity_id)
         if state and state.attributes.get("friendly_name"):
             return str(state.attributes["friendly_name"])
+
+        # Try entity registry (available earlier than states at boot)
+        try:
+            from homeassistant.helpers import entity_registry as er
+
+            registry = er.async_get(self.hass)
+            entry = registry.async_get(self._device_entity_id)
+            if entry:
+                if entry.name and entry.name.strip():
+                    return entry.name
+                if entry.original_name and entry.original_name.strip():
+                    return entry.original_name
+        except Exception:
+            pass  # Entity registry not available or other error
 
         # Fall back to extracting from entity_id
         name = self._device_entity_id.replace("climate.", "")
