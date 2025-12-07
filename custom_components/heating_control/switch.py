@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
 from .const import (
+    CONF_AUTO_HEATING_ENABLED,
     CONF_CLIMATE_DEVICES,
     CONF_DISABLED_DEVICES,
     CONF_SCHEDULES,
@@ -44,7 +45,10 @@ async def async_setup_entry(
     """Set up switch entities for Heating Control schedules and devices."""
     coordinator: HeatingControlCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities: List[Union[ScheduleEnableSwitch, DeviceEnableSwitch]] = []
+    entities: List[Union[MasterEnableSwitch, ScheduleEnableSwitch, DeviceEnableSwitch]] = []
+
+    # Add master enable switch (All Heating on/off)
+    entities.append(MasterEnableSwitch(coordinator, entry))
 
     # Add schedule enable switches
     if coordinator.data:
@@ -443,3 +447,63 @@ class DeviceEnableSwitch(BaseEnableSwitch):
         # Fall back to extracting from entity_id
         name = self._device_entity_id.replace("climate.", "")
         return name.replace("_", " ").title()
+
+
+class MasterEnableSwitch(BaseEnableSwitch):
+    """Master switch that enables or disables all automatic heating control.
+
+    When turned OFF:
+    - All schedules stop controlling devices
+    - All climate devices are turned off immediately
+
+    When turned ON:
+    - Normal schedule-based operation resumes
+    - Devices will be controlled according to active schedules
+    """
+
+    _attr_icon = "mdi:power"
+
+    def __init__(
+        self,
+        coordinator: HeatingControlCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialise the switch."""
+        super().__init__(coordinator, entry)
+
+        self._attr_unique_id = f"{entry.entry_id}_master_enabled"
+        self.entity_id = f"switch.heating_control_master"
+
+    @property
+    def name(self) -> str:
+        """Return the display name of the switch."""
+        return "All Heating"
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if automatic heating control is enabled."""
+        if self._pending_enabled_state is not None:
+            return self._pending_enabled_state
+
+        return self.coordinator.config.get(CONF_AUTO_HEATING_ENABLED, True)
+
+    @property
+    def extra_state_attributes(self) -> Dict[str, Any]:
+        """Return additional metadata."""
+        snapshot = self.coordinator.data
+        attrs: Dict[str, Any] = {
+            "auto_heating_enabled": self.coordinator.config.get(CONF_AUTO_HEATING_ENABLED, True),
+        }
+
+        if snapshot and snapshot.diagnostics:
+            attrs.update({
+                "active_schedules": snapshot.diagnostics.active_schedules,
+                "active_devices": snapshot.diagnostics.active_devices,
+                "schedule_count": snapshot.diagnostics.schedule_count,
+            })
+
+        return attrs
+
+    async def _async_set_enabled(self, enabled: bool) -> None:
+        """Set the master enabled state via coordinator."""
+        await self.coordinator.async_set_master_enabled(enabled)

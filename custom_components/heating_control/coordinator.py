@@ -1288,3 +1288,73 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 self._soft_update_count = max(0, self._soft_update_count - 1)
 
         self.hass.async_create_task(_background_refresh())
+
+    async def async_set_master_enabled(self, enabled: bool) -> None:
+        """Enable or disable automatic heating control globally.
+
+        When disabled:
+        - All schedules stop controlling devices
+        - All climate devices are turned off immediately
+
+        When enabled:
+        - Normal schedule-based operation resumes
+        - Devices will be controlled according to active schedules
+
+        Args:
+            enabled: True to enable automatic control, False to disable and turn off all devices
+        """
+        config_entry = self.config_entry
+        source = config_entry.options or config_entry.data
+        current_enabled = source.get(CONF_AUTO_HEATING_ENABLED, True)
+
+        if current_enabled == enabled:
+            _LOGGER.debug("Master heating control already %s", "enabled" if enabled else "disabled")
+            return
+
+        # Update config
+        update_kwargs: Dict[str, Dict] = {}
+        if config_entry.options:
+            new_options = dict(config_entry.options)
+            new_options[CONF_AUTO_HEATING_ENABLED] = enabled
+            update_kwargs["options"] = new_options
+        else:
+            new_data = dict(config_entry.data)
+            new_data[CONF_AUTO_HEATING_ENABLED] = enabled
+            update_kwargs["data"] = new_data
+
+        # Increment counter to skip full reload
+        self._soft_update_count += 1
+
+        # Update config entry
+        self.hass.config_entries.async_update_entry(config_entry, **update_kwargs)
+
+        _LOGGER.info("Master heating control %s", "enabled" if enabled else "disabled")
+
+        # When disabling, immediately turn off all climate devices
+        if not enabled:
+            climate_devices = source.get(CONF_CLIMATE_DEVICES, [])
+            for device_entity_id in climate_devices:
+                try:
+                    await self.hass.services.async_call(
+                        "climate",
+                        "set_hvac_mode",
+                        {"entity_id": device_entity_id, "hvac_mode": "off"},
+                        blocking=True,
+                    )
+                    _LOGGER.debug("Turned off device %s", device_entity_id)
+                except Exception as err:
+                    _LOGGER.warning("Failed to turn off device %s: %s", device_entity_id, err)
+
+        # Schedule background refresh
+        self._force_update = True
+
+        async def _background_refresh() -> None:
+            """Perform refresh and decrement counter when done."""
+            try:
+                await self.async_refresh()
+            except Exception as err:
+                _LOGGER.warning("Background refresh failed after master toggle: %s", err)
+            finally:
+                self._soft_update_count = max(0, self._soft_update_count - 1)
+
+        self.hass.async_create_task(_background_refresh())

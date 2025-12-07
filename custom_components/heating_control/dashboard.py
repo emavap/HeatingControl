@@ -204,7 +204,21 @@ class HeatingControlDashboardStrategy(Strategy):
         outdoor_temp_state = getattr(diagnostics, "outdoor_temp_state", "warm") if diagnostics else "warm"
         is_cold = outdoor_temp_state == "cold"
 
+        # Check if master heating is enabled
+        auto_heating_enabled = getattr(diagnostics, "auto_heating_enabled", True) if diagnostics else True
+
         buttons: List[Dict[str, Any]] = [
+            # Master on/off switch
+            {
+                "type": "button",
+                "entity": "switch.heating_control_master",
+                "name": "All Heating",
+                "icon": "mdi:power" if auto_heating_enabled else "mdi:power-off",
+                "icon_height": "50px",
+                "show_name": True,
+                "show_state": True,
+                "tap_action": {"action": "toggle"},
+            },
             # Presence button
             {
                 "type": "button",
@@ -277,7 +291,7 @@ class HeatingControlDashboardStrategy(Strategy):
         grid: Dict[str, Any] = {
             "type": "grid",
             "square": False,
-            "columns": 5 if outdoor_temp_sensor else 4,
+            "columns": 6 if outdoor_temp_sensor else 5,
             "cards": buttons,
         }
 

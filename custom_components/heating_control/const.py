@@ -60,6 +60,7 @@ __all__ = [
     # Services
     "SERVICE_SET_SCHEDULE_ENABLED",
     "SERVICE_SET_DEVICE_ENABLED",
+    "SERVICE_STOP_ALL",
     "ATTR_ENTRY_ID",
     "ATTR_SCHEDULE_ID",
     "ATTR_SCHEDULE_NAME",
@@ -192,6 +193,7 @@ UPDATE_INTERVAL = 60
 # Services
 SERVICE_SET_SCHEDULE_ENABLED = "set_schedule_enabled"
 SERVICE_SET_DEVICE_ENABLED = "set_device_enabled"
+SERVICE_STOP_ALL = "stop_all"
 
 # Service attributes
 ATTR_ENTRY_ID = "entry_id"
