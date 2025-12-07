@@ -125,6 +125,11 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         self._previous_presence_state: Optional[bool] = None
         self._force_update = False
 
+        # Counter for "soft updates" in progress (schedule/device toggles).
+        # When > 0, the config entry update listener should skip full reload.
+        # Using a counter instead of boolean to handle concurrent rapid toggles.
+        self._soft_update_count = 0
+
         # Watchdog state tracking
         self._last_update_start: Optional[float] = None
         self._last_update_complete: Optional[float] = None
@@ -433,11 +438,6 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             diagnostics=enriched_diagnostics,
         )
 
-    def force_update_on_next_refresh(self) -> None:
-        """Force control application on next update (for config changes)."""
-        _LOGGER.info("Forcing update on next refresh")
-        self._force_update = True
-
     @staticmethod
     def _derive_auto_end_times(schedules: List[dict]) -> Dict[str, str]:
         """Derive implicit end times per-device to allow overlapping schedules for different devices.
@@ -653,7 +653,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             diagnostics=diagnostics,
         )
 
-    def _resolve_presence(self, config) -> Tuple[Dict[str, bool], bool, bool]:
+    def _resolve_presence(self, config: Dict[str, Any]) -> Tuple[Dict[str, bool], bool, bool]:
         """Determine presence based on configured device trackers."""
         tracker_entities = [
             tracker for tracker in config.get(CONF_DEVICE_TRACKERS, []) if tracker
@@ -1111,14 +1111,27 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             new_data[CONF_SCHEDULES] = new_schedules
             update_kwargs["data"] = new_data
 
+        # Increment counter to skip full reload - this is just a toggle change
+        self._soft_update_count += 1
+
         # Update config entry (callback method; no await needed)
         self.hass.config_entries.async_update_entry(
             config_entry, **update_kwargs
         )
 
-        # Ensure the new configuration is applied immediately.
+        # Schedule background refresh - don't await to keep UI responsive
         self._force_update = True
-        self.hass.async_create_task(self.async_refresh())
+
+        async def _background_refresh() -> None:
+            """Perform refresh and decrement counter when done."""
+            try:
+                await self.async_refresh()
+            except Exception as err:
+                _LOGGER.warning("Background refresh failed after schedule toggle: %s", err)
+            finally:
+                self._soft_update_count = max(0, self._soft_update_count - 1)
+
+        self.hass.async_create_task(_background_refresh())
 
     async def async_set_device_enabled(
         self,
@@ -1172,6 +1185,9 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             new_data[CONF_DISABLED_DEVICES] = disabled_devices
             update_kwargs["data"] = new_data
 
+        # Increment counter to skip full reload - this is just a toggle change
+        self._soft_update_count += 1
+
         # Update config entry (callback method; no await needed)
         self.hass.config_entries.async_update_entry(
             config_entry, **update_kwargs
@@ -1183,6 +1199,16 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             "enabled" if enabled else "disabled",
         )
 
-        # Ensure the new configuration is applied immediately.
+        # Schedule background refresh - don't await to keep UI responsive
         self._force_update = True
-        self.hass.async_create_task(self.async_refresh())
+
+        async def _background_refresh() -> None:
+            """Perform refresh and decrement counter when done."""
+            try:
+                await self.async_refresh()
+            except Exception as err:
+                _LOGGER.warning("Background refresh failed after device toggle: %s", err)
+            finally:
+                self._soft_update_count = max(0, self._soft_update_count - 1)
+
+        self.hass.async_create_task(_background_refresh())

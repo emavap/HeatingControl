@@ -54,11 +54,20 @@ class ClimateController:
         """
         self._timed_out_devices.clear()
 
-        # Collect current device IDs and clean up orphaned devices from force refresh set
-        current_devices = {d.entity_id for d in device_decisions}
+        # Convert to list to allow multiple iterations
+        decisions_list = list(device_decisions)
+
+        # Collect current device IDs and clean up orphaned devices
+        current_devices = {d.entity_id for d in decisions_list}
         self._force_refresh_devices &= current_devices  # Set intersection
 
-        for decision in device_decisions:
+        # Clean up history for devices no longer in configuration
+        orphaned_devices = set(self._history.keys()) - current_devices
+        for device_id in orphaned_devices:
+            del self._history[device_id]
+            _LOGGER.debug("Cleaned up history for removed device: %s", device_id)
+
+        for decision in decisions_list:
             await self._apply_device(decision)
         return list(self._timed_out_devices)
 

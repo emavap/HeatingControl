@@ -13,7 +13,10 @@ Key features:
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
+
+_LOGGER = logging.getLogger(__name__)
 
 try:
     from homeassistant.components.lovelace.strategy import Strategy as LovelaceStrategy
@@ -33,10 +36,15 @@ from .const import (
     ENTITY_DECISION_DIAGNOSTICS,
     ENTITY_EVERYONE_AWAY,
     SCHEDULE_SWITCH_ENTITY_TEMPLATE,
+    STATUS_IDLE,
+    STATUS_OFF,
+    STATUS_ON,
+    STATUS_WAIT,
 )
 
 if TYPE_CHECKING:
     from homeassistant.components.lovelace.strategy import Strategy as StrategyType
+    from .models import HeatingStateSnapshot
 
 if LovelaceStrategy is not None:
     Strategy: type[StrategyType] = LovelaceStrategy
@@ -86,70 +94,77 @@ class HeatingControlDashboardStrategy(Strategy):
         - Device status cards
         - Schedule cards with rich formatting
         """
-        coordinator = self._resolve_coordinator()
-        if coordinator is None:
-            return self._build_message(
-                "Heating Control",
-                "Heating Control integration is not loaded. "
-                "Add the integration and ensure it is configured before using this dashboard.",
+        try:
+            coordinator = self._resolve_coordinator()
+            if coordinator is None:
+                return self._build_message(
+                    "Heating Control",
+                    "Heating Control integration is not loaded. "
+                    "Add the integration and ensure it is configured before using this dashboard.",
+                )
+
+            entry_id = coordinator.config_entry.entry_id
+            climate_entities: Sequence[str] = self._get_config_list(
+                coordinator, CONF_CLIMATE_DEVICES
+            )
+            snapshot = coordinator.data
+
+            tracker_entities: Sequence[str] = self._get_config_list(
+                coordinator, CONF_DEVICE_TRACKERS
             )
 
-        entry_id = coordinator.config_entry.entry_id
-        climate_entities: Sequence[str] = self._get_config_list(
-            coordinator, CONF_CLIMATE_DEVICES
-        )
-        snapshot = coordinator.data
+            # Build all card components
+            cards: List[Dict[str, Any]] = []
 
-        tracker_entities: Sequence[str] = self._get_config_list(
-            coordinator, CONF_DEVICE_TRACKERS
-        )
+            # Header section
+            cards.append(self._build_header_card())
 
-        # Build all card components
-        cards: List[Dict[str, Any]] = []
+            # Quick status grid with buttons
+            cards.append(self._build_status_grid(snapshot, tracker_entities))
 
-        # Header section
-        cards.append(self._build_header_card())
+            # Climate controls section
+            climate_cards = self._build_climate_grid(climate_entities)
+            if climate_cards:
+                cards.append(climate_cards)
 
-        # Quick status grid with buttons
-        cards.append(self._build_status_grid(snapshot, tracker_entities))
+            # Device status section (with enable/disable switches)
+            disabled_devices: Sequence[str] = self._get_config_list(
+                coordinator, CONF_DISABLED_DEVICES
+            )
+            device_status_card = self._build_device_status_section(
+                entry_id, snapshot, climate_entities, disabled_devices
+            )
+            if device_status_card:
+                cards.append(device_status_card)
 
-        # Climate controls section
-        climate_cards = self._build_climate_grid(climate_entities)
-        if climate_cards:
-            cards.append(climate_cards)
+            # Schedules section
+            schedule_section = self._build_schedule_section(entry_id, snapshot)
+            if schedule_section:
+                cards.append(schedule_section)
 
-        # Device status section (with enable/disable switches)
-        disabled_devices: Sequence[str] = self._get_config_list(
-            coordinator, CONF_DISABLED_DEVICES
-        )
-        device_status_card = self._build_device_status_section(
-            entry_id, snapshot, climate_entities, disabled_devices
-        )
-        if device_status_card:
-            cards.append(device_status_card)
-
-        # Schedules section
-        schedule_section = self._build_schedule_section(entry_id, snapshot)
-        if schedule_section:
-            cards.append(schedule_section)
-
-        return {
-            "title": "Smart Heating",
-            "views": [
-                {
-                    "title": "Smart Heating",
-                    "path": "smart-heating",
-                    "icon": "mdi:thermostat",
-                    "panel": True,
-                    "cards": [
-                        {
-                            "type": "vertical-stack",
-                            "cards": cards,
-                        }
-                    ],
-                }
-            ],
-        }
+            return {
+                "title": "Smart Heating",
+                "views": [
+                    {
+                        "title": "Smart Heating",
+                        "path": "smart-heating",
+                        "icon": "mdi:thermostat",
+                        "panel": True,
+                        "cards": [
+                            {
+                                "type": "vertical-stack",
+                                "cards": cards,
+                            }
+                        ],
+                    }
+                ],
+            }
+        except Exception as err:
+            _LOGGER.exception("Error generating dashboard: %s", err)
+            return self._build_message(
+                "Dashboard Error",
+                f"An error occurred while generating the dashboard: {err}",
+            )
 
     def _build_header_card(self) -> Dict[str, Any]:
         """Build the dashboard header with title."""
@@ -159,7 +174,7 @@ class HeatingControlDashboardStrategy(Strategy):
         }
 
     def _build_status_grid(
-        self, snapshot, tracker_entities: Sequence[str]
+        self, snapshot: Optional["HeatingStateSnapshot"], tracker_entities: Sequence[str]
     ) -> Dict[str, Any]:
         """Build a grid of status buttons for at-a-glance system state."""
         diagnostics = getattr(snapshot, "diagnostics", None) if snapshot else None
@@ -284,7 +299,7 @@ class HeatingControlDashboardStrategy(Strategy):
     def _build_device_status_section(
         self,
         entry_id: str,
-        snapshot,
+        snapshot: Optional["HeatingStateSnapshot"],
         climate_entities: Sequence[str],
         disabled_devices: Sequence[str],
     ) -> Optional[Dict[str, Any]]:
@@ -312,7 +327,7 @@ class HeatingControlDashboardStrategy(Strategy):
             # Build status text based on device state
             if is_disabled:
                 status_text = "Disabled - manual control"
-                status_icon = "[OFF]"
+                status_icon = STATUS_OFF
             elif device_decision and device_decision.active_schedules:
                 schedule_name = self._schedule_display_name(
                     snapshot, device_decision.active_schedules[0]
@@ -321,10 +336,10 @@ class HeatingControlDashboardStrategy(Strategy):
                 target_temp = device_decision.target_temp
                 temp_str = f" @ {target_temp:g}°" if target_temp is not None else ""
                 status_text = f"{schedule_name} | {hvac_mode.title()}{temp_str}"
-                status_icon = "[ON]" if device_decision.should_be_active else "[IDLE]"
+                status_icon = STATUS_ON if device_decision.should_be_active else STATUS_IDLE
             else:
                 status_text = "Idle - no active schedule"
-                status_icon = "[IDLE]"
+                status_icon = STATUS_IDLE
 
             # Build card entities
             card_entities: List[Dict[str, Any]] = [
@@ -358,7 +373,7 @@ class HeatingControlDashboardStrategy(Strategy):
         }
 
     def _build_schedule_section(
-        self, entry_id: str, snapshot
+        self, entry_id: str, snapshot: Optional["HeatingStateSnapshot"]
     ) -> Optional[Dict[str, Any]]:
         """Build modern schedule cards with rich formatting."""
         if not snapshot or not snapshot.schedule_decisions:
@@ -528,7 +543,9 @@ class HeatingControlDashboardStrategy(Strategy):
         # Fallback to a slugified title when no friendly name is available
         return entity_id.split(".", 1)[-1].replace("_", " ").title()
 
-    def _schedule_display_name(self, snapshot, schedule_ref: Optional[str]) -> str:
+    def _schedule_display_name(
+        self, snapshot: Optional["HeatingStateSnapshot"], schedule_ref: Optional[str]
+    ) -> str:
         """Return a friendly name for a schedule using snapshot data when possible."""
         if not schedule_ref:
             return ""
@@ -555,11 +572,11 @@ class HeatingControlDashboardStrategy(Strategy):
     def _get_schedule_status_icon(self, decision) -> str:
         """Return a status marker for a schedule based on its current state."""
         if not decision.enabled:
-            return "[OFF]"
+            return STATUS_OFF
         elif decision.is_active:
-            return "[ON]"
+            return STATUS_ON
         elif decision.in_time_window:
-            return "[WAIT]"
+            return STATUS_WAIT
         else:
             return ""
 

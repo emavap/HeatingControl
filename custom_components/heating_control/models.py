@@ -14,7 +14,29 @@ __all__ = [
 
 @dataclass(frozen=True)
 class ScheduleDecision:
-    """Decision data for an individual schedule."""
+    """Decision data for an individual schedule.
+
+    Attributes:
+        schedule_id: Unique identifier for this schedule (UUID).
+        name: User-friendly display name for the schedule.
+        start_time: Schedule start time in "HH:MM" format.
+        end_time: Schedule end time in "HH:MM" format (may be auto-derived).
+        hvac_mode: Current HVAC mode to apply (considering presence).
+        hvac_mode_home: HVAC mode when someone is home.
+        hvac_mode_away: HVAC mode when away, or None if not configured.
+        only_when_home: Whether schedule requires presence to activate.
+        enabled: Whether the schedule is enabled by the user.
+        is_active: True if schedule is currently controlling devices.
+        in_time_window: True if current time is within schedule window.
+        presence_ok: True if presence requirement is satisfied.
+        device_count: Number of climate devices this schedule controls.
+        devices: Tuple of climate entity IDs this schedule controls.
+        schedule_device_trackers: Per-schedule device trackers, or empty.
+        target_temp: Current target temperature (considering presence).
+        target_temp_home: Target temperature when home.
+        target_temp_away: Target temperature when away, or None.
+        target_fan: Fan mode to set, or None if not configured.
+    """
 
     schedule_id: str
     name: str
@@ -63,7 +85,16 @@ class ScheduleDecision:
 
 @dataclass(frozen=True)
 class DeviceDecision:
-    """Decision data for an individual climate device."""
+    """Decision data for an individual climate device.
+
+    Attributes:
+        entity_id: Climate entity ID (e.g., "climate.bedroom_ac").
+        should_be_active: True if device should be actively heating/cooling.
+        active_schedules: Tuple of schedule IDs currently controlling this device.
+        hvac_mode: HVAC mode to set (heat/cool/off), or None for no action.
+        target_temp: Target temperature to set, or None.
+        target_fan: Fan mode to set, or None.
+    """
 
     entity_id: str
     should_be_active: bool
@@ -86,7 +117,21 @@ class DeviceDecision:
 
 @dataclass(frozen=True)
 class DiagnosticsSnapshot:
-    """Diagnostics information about the current coordinator decision state."""
+    """Diagnostics information about the current coordinator decision state.
+
+    Attributes:
+        now_time: Current time string when snapshot was taken.
+        tracker_states: Map of device tracker entity ID to home status.
+        trackers_home: Count of trackers currently showing "home".
+        trackers_total: Total number of configured trackers.
+        auto_heating_enabled: Whether automatic heating is globally enabled.
+        schedule_count: Total number of configured schedules.
+        active_schedules: Number of currently active schedules.
+        active_devices: Number of devices with active control.
+        last_update_duration: Duration of last update cycle in seconds.
+        timed_out_devices: Tuple of entity IDs that timed out during control.
+        watchdog_status: Health status ("healthy", "degraded", "stuck").
+    """
 
     now_time: str
     tracker_states: Mapping[str, bool]
@@ -119,7 +164,15 @@ class DiagnosticsSnapshot:
 
 @dataclass(frozen=True)
 class HeatingStateSnapshot:
-    """Complete state snapshot calculated by the coordinator."""
+    """Complete state snapshot calculated by the coordinator.
+
+    Attributes:
+        everyone_away: True if all tracked persons are away.
+        anyone_home: True if at least one tracked person is home.
+        schedule_decisions: Map of schedule ID to ScheduleDecision.
+        device_decisions: Map of climate entity ID to DeviceDecision.
+        diagnostics: Diagnostics metadata about this update cycle.
+    """
 
     everyone_away: bool
     anyone_home: bool

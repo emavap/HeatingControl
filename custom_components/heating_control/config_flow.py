@@ -79,6 +79,71 @@ def _is_duplicate_schedule_name(
     return False
 
 
+def _build_schedule_config(
+    user_input: dict[str, Any],
+    schedule_devices: list[str],
+    existing_id: str | None = None,
+) -> dict[str, Any]:
+    """Build a schedule configuration dictionary from user input.
+
+    Args:
+        user_input: Form data from config flow.
+        schedule_devices: List of selected climate device entity IDs.
+        existing_id: Existing schedule ID to preserve (for edits), or None for new.
+
+    Returns:
+        Schedule configuration dictionary.
+    """
+    schedule_name = user_input.get(CONF_SCHEDULE_NAME, "").strip()
+    return {
+        CONF_SCHEDULE_ID: existing_id or str(uuid.uuid4()),
+        CONF_SCHEDULE_NAME: schedule_name,
+        CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
+        CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
+        CONF_SCHEDULE_HVAC_MODE: user_input.get(
+            CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE
+        ),
+        CONF_SCHEDULE_ONLY_WHEN_HOME: user_input.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True),
+        CONF_SCHEDULE_DEVICE_TRACKERS: list(user_input.get(CONF_SCHEDULE_DEVICE_TRACKERS, [])),
+        CONF_SCHEDULE_DEVICES: schedule_devices,
+        CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
+        CONF_SCHEDULE_FAN_MODE: user_input.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE),
+    }
+
+
+def _apply_away_settings(
+    schedule_config: dict[str, Any],
+    user_input: dict[str, Any],
+    preserve_existing: bool = False,
+) -> str | None:
+    """Apply away mode settings to a schedule config.
+
+    Args:
+        schedule_config: Schedule config dict to modify in place.
+        user_input: Form data from config flow.
+        preserve_existing: If True, remove away settings when not specified.
+
+    Returns:
+        Error key if validation fails, None otherwise.
+    """
+    away_mode = user_input.get(CONF_SCHEDULE_AWAY_HVAC_MODE, "inherit")
+    away_temp = user_input.get(CONF_SCHEDULE_AWAY_TEMPERATURE)
+
+    # Validate away settings
+    if away_temp is not None and (not away_mode or away_mode == "inherit"):
+        return "away_temp_without_mode"
+
+    if away_mode and away_mode != "inherit":
+        schedule_config[CONF_SCHEDULE_AWAY_HVAC_MODE] = away_mode
+        if away_temp is not None:
+            schedule_config[CONF_SCHEDULE_AWAY_TEMPERATURE] = away_temp
+    elif preserve_existing:
+        schedule_config.pop(CONF_SCHEDULE_AWAY_HVAC_MODE, None)
+        schedule_config.pop(CONF_SCHEDULE_AWAY_TEMPERATURE, None)
+
+    return None
+
+
 def _detect_schedule_overlaps(schedules: list[dict[str, Any]]) -> list[str]:
     """Detect overlapping schedules for the same devices.
 
@@ -256,35 +321,14 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not schedule_devices:
                 errors[CONF_SCHEDULE_DEVICES] = "no_devices_selected"
 
-            schedule_config = {
-                CONF_SCHEDULE_ID: str(uuid.uuid4()),
-                CONF_SCHEDULE_NAME: schedule_name,
-                CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
-                CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
-                CONF_SCHEDULE_HVAC_MODE: user_input.get(
-                    CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE
-                ),
-                CONF_SCHEDULE_ONLY_WHEN_HOME: user_input.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True),
-                CONF_SCHEDULE_DEVICE_TRACKERS: list(user_input.get(CONF_SCHEDULE_DEVICE_TRACKERS, [])),
-                CONF_SCHEDULE_DEVICES: schedule_devices,
-                CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
-                CONF_SCHEDULE_FAN_MODE: user_input.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE),
-            }
-
-            away_mode = user_input.get(CONF_SCHEDULE_AWAY_HVAC_MODE, "inherit")
-            away_temp = user_input.get(CONF_SCHEDULE_AWAY_TEMPERATURE)
-
-            # Validate away settings
-            if away_temp is not None and (not away_mode or away_mode == "inherit"):
-                errors[CONF_SCHEDULE_AWAY_TEMPERATURE] = "away_temp_without_mode"
-
             if not errors:
-                if away_mode and away_mode != "inherit":
-                    schedule_config[CONF_SCHEDULE_AWAY_HVAC_MODE] = away_mode
-                    if away_temp is not None:
-                        schedule_config[CONF_SCHEDULE_AWAY_TEMPERATURE] = away_temp
-                self._pending_schedules.append(schedule_config)
-                return await self.async_step_add_schedule()
+                schedule_config = _build_schedule_config(user_input, schedule_devices)
+                away_error = _apply_away_settings(schedule_config, user_input)
+                if away_error:
+                    errors[CONF_SCHEDULE_AWAY_TEMPERATURE] = away_error
+                else:
+                    self._pending_schedules.append(schedule_config)
+                    return await self.async_step_add_schedule()
 
         # Create device options from available devices
         device_options = [{"label": device, "value": device} for device in self._selected_climate_entities]
@@ -539,35 +583,14 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
             if not schedule_devices:
                 errors[CONF_SCHEDULE_DEVICES] = "no_devices_selected"
 
-            schedule_config = {
-                CONF_SCHEDULE_ID: str(uuid.uuid4()),
-                CONF_SCHEDULE_NAME: schedule_name,
-                CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
-                CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
-                CONF_SCHEDULE_HVAC_MODE: user_input.get(
-                    CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE
-                ),
-                CONF_SCHEDULE_ONLY_WHEN_HOME: user_input.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True),
-                CONF_SCHEDULE_DEVICE_TRACKERS: list(user_input.get(CONF_SCHEDULE_DEVICE_TRACKERS, [])),
-                CONF_SCHEDULE_DEVICES: schedule_devices,
-                CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
-                CONF_SCHEDULE_FAN_MODE: user_input.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE),
-            }
-
-            away_mode = user_input.get(CONF_SCHEDULE_AWAY_HVAC_MODE, "inherit")
-            away_temp = user_input.get(CONF_SCHEDULE_AWAY_TEMPERATURE)
-
-            # Validate away settings
-            if away_temp is not None and (not away_mode or away_mode == "inherit"):
-                errors[CONF_SCHEDULE_AWAY_TEMPERATURE] = "away_temp_without_mode"
-
             if not errors:
-                if away_mode and away_mode != "inherit":
-                    schedule_config[CONF_SCHEDULE_AWAY_HVAC_MODE] = away_mode
-                    if away_temp is not None:
-                        schedule_config[CONF_SCHEDULE_AWAY_TEMPERATURE] = away_temp
-                self._pending_schedules.append(schedule_config)
-                return await self.async_step_manage_schedules()
+                schedule_config = _build_schedule_config(user_input, schedule_devices)
+                away_error = _apply_away_settings(schedule_config, user_input)
+                if away_error:
+                    errors[CONF_SCHEDULE_AWAY_TEMPERATURE] = away_error
+                else:
+                    self._pending_schedules.append(schedule_config)
+                    return await self.async_step_manage_schedules()
 
         device_options = [{"label": device, "value": device} for device in self._selected_climate_entities]
 
@@ -698,38 +721,14 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
 
                 # Update the schedule at the stored index
                 existing_schedule = self._pending_schedules[self._active_schedule_index]
-                schedule_config = {
-                    CONF_SCHEDULE_ID: existing_schedule.get(CONF_SCHEDULE_ID, str(uuid.uuid4())),
-                    CONF_SCHEDULE_NAME: schedule_name,
-                    CONF_SCHEDULE_ENABLED: user_input.get(CONF_SCHEDULE_ENABLED, True),
-                    CONF_SCHEDULE_START: user_input.get(CONF_SCHEDULE_START, DEFAULT_SCHEDULE_START),
-                    CONF_SCHEDULE_HVAC_MODE: user_input.get(
-                        CONF_SCHEDULE_HVAC_MODE, DEFAULT_SCHEDULE_HVAC_MODE
-                    ),
-                    CONF_SCHEDULE_ONLY_WHEN_HOME: user_input.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True),
-                    CONF_SCHEDULE_DEVICE_TRACKERS: list(user_input.get(CONF_SCHEDULE_DEVICE_TRACKERS, [])),
-                    CONF_SCHEDULE_DEVICES: schedule_devices,
-                    CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
-                    CONF_SCHEDULE_FAN_MODE: user_input.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE),
-                }
-                away_mode = user_input.get(CONF_SCHEDULE_AWAY_HVAC_MODE, "inherit")
-                away_temp = user_input.get(CONF_SCHEDULE_AWAY_TEMPERATURE)
+                existing_id = existing_schedule.get(CONF_SCHEDULE_ID, str(uuid.uuid4()))
+                schedule_config = _build_schedule_config(user_input, schedule_devices, existing_id)
 
-                # Validate away settings
-                if away_temp is not None and (not away_mode or away_mode == "inherit"):
-                    errors[CONF_SCHEDULE_AWAY_TEMPERATURE] = "away_temp_without_mode"
-
-                if errors:
-                    # Return to the same form with errors
-                    pass  # Will fall through to show form with errors
-                else:
-                    if away_mode and away_mode != "inherit":
-                        schedule_config[CONF_SCHEDULE_AWAY_HVAC_MODE] = away_mode
-                        if away_temp is not None:
-                            schedule_config[CONF_SCHEDULE_AWAY_TEMPERATURE] = away_temp
-                    else:
-                        schedule_config.pop(CONF_SCHEDULE_AWAY_HVAC_MODE, None)
-                        schedule_config.pop(CONF_SCHEDULE_AWAY_TEMPERATURE, None)
+                away_error = _apply_away_settings(schedule_config, user_input, preserve_existing=True)
+                if away_error:
+                    errors[CONF_SCHEDULE_AWAY_TEMPERATURE] = away_error
+                elif not errors:
+                    # Preserve end_time if it existed
                     if CONF_SCHEDULE_END in existing_schedule:
                         schedule_config[CONF_SCHEDULE_END] = existing_schedule[CONF_SCHEDULE_END]
                     self._pending_schedules[self._active_schedule_index] = schedule_config

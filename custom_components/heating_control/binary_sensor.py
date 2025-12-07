@@ -50,23 +50,32 @@ async def async_setup_entry(
 
 
 class HeatingControlBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """Base binary sensor for heating control."""
+    """Base binary sensor for heating control.
+
+    Provides common device_info property and entry_id tracking.
+    Subclasses can either:
+    - Call super().__init__ with sensor_type/name/icon for simple sensors
+    - Call super().__init__ with only coordinator/entry and set attrs manually
+    """
 
     def __init__(
         self,
         coordinator: HeatingControlCoordinator,
         entry: ConfigEntry,
-        sensor_type: str,
-        name: str,
+        sensor_type: str | None = None,
+        name: str | None = None,
         icon: str | None = None,
     ) -> None:
         """Initialize the binary sensor."""
         super().__init__(coordinator)
         self._entry_id = entry.entry_id
-        self._attr_unique_id = f"{entry.entry_id}_{sensor_type}"
-        self._attr_name = f"Heating Control {name}"
-        self._sensor_type = sensor_type
-        if icon:
+        # Only set these if provided (allows subclasses to set them manually)
+        if sensor_type is not None:
+            self._attr_unique_id = f"{entry.entry_id}_{sensor_type}"
+            self._sensor_type = sensor_type
+        if name is not None:
+            self._attr_name = f"Heating Control {name}"
+        if icon is not None:
             self._attr_icon = icon
 
     @property
@@ -103,16 +112,15 @@ class EveryoneAwayBinarySensor(HeatingControlBinarySensor):
         return bool(snapshot and snapshot.everyone_away)
 
 
-class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
+class ScheduleActiveBinarySensor(HeatingControlBinarySensor):
     """Binary sensor for schedule active status."""
 
     def __init__(
         self, coordinator: HeatingControlCoordinator, entry: ConfigEntry, schedule_id: str
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, entry)
         self._schedule_id = schedule_id
-        self._entry_id = entry.entry_id
 
         # Get schedule info from coordinator data
         schedule = None
@@ -128,16 +136,6 @@ class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
         slug_schedule = slugify(schedule_id or schedule_name)
         self.entity_id = SCHEDULE_BINARY_ENTITY_TEMPLATE.format(
             entry=slug_entry, schedule=slug_schedule
-        )
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry_id)},
-            name="Heating Control",
-            manufacturer="Heating Control",
-            model="Smart Heating Schedule",
         )
 
     @property
@@ -179,16 +177,15 @@ class ScheduleActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
         }
 
 
-class DeviceActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
+class DeviceActiveBinarySensor(HeatingControlBinarySensor):
     """Binary sensor for individual device active status."""
 
     def __init__(
         self, coordinator: HeatingControlCoordinator, entry: ConfigEntry, device_entity: str
     ) -> None:
         """Initialize the sensor."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, entry)
         self._device_entity = device_entity
-        self._entry_id = entry.entry_id
 
         # Generate a safe unique ID from the entity ID
         safe_id = device_entity.replace("climate.", "").replace(".", "_")
@@ -201,16 +198,6 @@ class DeviceActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
         self.entity_id = DEVICE_BINARY_ENTITY_TEMPLATE.format(
             entry=slug_entry,
             device=slug_device,
-        )
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry_id)},
-            name="Heating Control",
-            manufacturer="Heating Control",
-            model="Smart Heating Schedule",
         )
 
     @property

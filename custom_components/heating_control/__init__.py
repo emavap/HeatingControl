@@ -137,7 +137,23 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle config entry options update by reloading the entry."""
+    """Handle config entry options update by reloading the entry.
+
+    If the coordinator's _soft_update_count is > 0, this was a "soft"
+    toggle (schedule/device enable/disable) that doesn't require a full reload.
+    """
+    # Check if the coordinator is requesting to skip reload
+    entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if entry_data is not None:
+        coordinator: HeatingControlCoordinator = entry_data
+        if getattr(coordinator, "_soft_update_count", 0) > 0:
+            _LOGGER.debug(
+                "Skipping full reload - soft update (schedule/device toggle) in progress"
+            )
+            # No dashboard refresh needed - entities update via coordinator
+            # and the dashboard strategy generates from live state
+            return
+
     _LOGGER.info("Configuration updated, reloading Heating Control entry")
     await hass.config_entries.async_reload(entry.entry_id)
 
@@ -376,9 +392,9 @@ async def _async_register_lovelace_dashboard(
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.warning(
                 "Could not create Lovelace dashboard entry for %s: %s",
-                    url_path,
-                    err,
-                )
+                url_path,
+                err,
+            )
             return
         created_item = True
         existing_item_id = dashboard_item["id"]

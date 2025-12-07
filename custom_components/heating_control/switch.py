@@ -1,6 +1,7 @@
 """Switch entities for Heating Control schedules and devices."""
 from __future__ import annotations
 
+from abc import abstractmethod
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from homeassistant.components.switch import SwitchEntity
@@ -58,11 +59,128 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
+class BaseEnableSwitch(CoordinatorEntity, SwitchEntity):
+    """Base class for enable/disable switches with optimistic update support.
+
+    This class provides:
+    - Optimistic state updates for responsive UI
+    - Automatic pending state clearing on coordinator updates
+    - Timeout-based fallback for clearing pending state
+    - Common device_info and lifecycle management
+    """
+
+    _attr_should_poll = False
+
+    def __init__(
+        self,
+        coordinator: HeatingControlCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        """Initialise the base switch."""
+        super().__init__(coordinator)
+        self._entry_id = entry.entry_id
+        self._pending_enabled_state: Optional[bool] = None
+        self._pending_clear_unsub: Optional[Callable[[], None]] = None
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._entry_id)},
+            name="Heating Control",
+            manufacturer="Heating Control",
+            model="Smart Heating Schedule",
+        )
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Return the display name of the switch."""
+
+    @property
+    @abstractmethod
+    def is_on(self) -> bool:
+        """Return True if the switch is on."""
+
+    @abstractmethod
+    async def _async_set_enabled(self, enabled: bool) -> None:
+        """Set the enabled state via coordinator."""
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn on the switch (enable)."""
+        self._pending_enabled_state = True
+        self._schedule_pending_clear()
+        self.async_write_ha_state()
+
+        try:
+            await self._async_set_enabled(True)
+        except ValueError:
+            self._cancel_pending_clear()
+            self._pending_enabled_state = None
+            self.async_write_ha_state()
+            raise
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn off the switch (disable)."""
+        self._pending_enabled_state = False
+        self._schedule_pending_clear()
+        self.async_write_ha_state()
+
+        try:
+            await self._async_set_enabled(False)
+        except ValueError:
+            self._cancel_pending_clear()
+            self._pending_enabled_state = None
+            self.async_write_ha_state()
+            raise
+
+    def _handle_coordinator_update(self) -> None:
+        """Clear any pending state overrides when fresh data arrives."""
+        self._cancel_pending_clear()
+        if self.coordinator.last_update_success is False and self._pending_enabled_state is not None:
+            self._pending_enabled_state = None
+        elif self.coordinator.last_update_success:
+            self._pending_enabled_state = None
+        super()._handle_coordinator_update()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up any scheduled callbacks."""
+        self._cancel_pending_clear()
+        await super().async_will_remove_from_hass()
+
+    def _clear_pending_state(self, *_args: Any) -> None:
+        """Drop optimistic state if the coordinator never confirms."""
+        if self._pending_enabled_state is None:
+            return
+        self._pending_enabled_state = None
+        self._cancel_pending_clear()
+        self.async_write_ha_state()
+
+    def _schedule_pending_clear(self) -> None:
+        """Ensure optimistic state is cleared even when refresh keeps failing.
+
+        Timeout is set to 2x the coordinator update interval to allow for
+        one potentially slow update cycle before reverting optimistic state.
+        """
+        self._cancel_pending_clear()
+        timeout_seconds = max(60, int(self.coordinator.update_interval.total_seconds() * 2))
+        self._pending_clear_unsub = async_call_later(
+            self.hass,
+            timeout_seconds,
+            self._clear_pending_state,
+        )
+
+    def _cancel_pending_clear(self) -> None:
+        """Cancel any scheduled optimistic-state reset."""
+        if self._pending_clear_unsub:
+            self._pending_clear_unsub()
+            self._pending_clear_unsub = None
+
+
+class ScheduleEnableSwitch(BaseEnableSwitch):
     """Switch that enables or disables a Heating Control schedule."""
 
     _attr_icon = "mdi:calendar-check"
-    _attr_should_poll = False
 
     def __init__(
         self,
@@ -71,9 +189,8 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         schedule_id: str,
     ) -> None:
         """Initialise the switch."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, entry)
         self._schedule_id = schedule_id
-        self._entry_id = entry.entry_id
 
         schedule = self._get_schedule_decision()
         schedule_name = schedule.name if schedule else schedule_id
@@ -86,20 +203,8 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         )
         self._fallback_name = schedule_name
         self._attr_unique_id = f"{entry.entry_id}_schedule_{schedule_id}_enabled"
-        self._pending_enabled_state: Optional[bool] = None
-        self._pending_clear_unsub: Optional[Callable[[], None]] = None
         # Cache for config schedule to reduce repeated lookups
         self._cached_config_schedule: Optional[Dict[str, Any]] = None
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry_id)},
-            name="Heating Control",
-            manufacturer="Heating Control",
-            model="Smart Heating Schedule",
-        )
 
     @property
     def name(self) -> str:
@@ -171,45 +276,18 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
 
         return {"schedule_id": self._schedule_id}
 
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Enable the schedule."""
+    async def _async_set_enabled(self, enabled: bool) -> None:
+        """Set the schedule enabled state via coordinator."""
         await self.coordinator.async_set_schedule_enabled(
             schedule_id=self._schedule_id,
-            enabled=True,
+            enabled=enabled,
         )
-        # Optimistically expose the new state until the coordinator refresh completes
-        self._pending_enabled_state = True
-        self._schedule_pending_clear()
-        self.async_write_ha_state()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Disable the schedule."""
-        await self.coordinator.async_set_schedule_enabled(
-            schedule_id=self._schedule_id,
-            enabled=False,
-        )
-        # Optimistically expose the new state until the coordinator refresh completes
-        self._pending_enabled_state = False
-        self._schedule_pending_clear()
-        self.async_write_ha_state()
 
     def _handle_coordinator_update(self) -> None:
         """Clear any pending state overrides when fresh data arrives."""
-        self._cancel_pending_clear()
-        # Clear optimistic state on failed updates to revert UI to actual state
-        if self.coordinator.last_update_success is False and self._pending_enabled_state is not None:
-            self._pending_enabled_state = None
-        elif self.coordinator.last_update_success:
-            # Successful update - optimistic state no longer needed
-            self._pending_enabled_state = None
         # Invalidate config schedule cache on coordinator update
         self._cached_config_schedule = None
         super()._handle_coordinator_update()
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Clean up any scheduled callbacks."""
-        self._cancel_pending_clear()
-        await super().async_will_remove_from_hass()
 
     def _get_schedule_decision(self) -> Optional[Any]:
         """Return the current schedule decision snapshot."""
@@ -251,37 +329,8 @@ class ScheduleEnableSwitch(CoordinatorEntity, SwitchEntity):
         self._cached_config_schedule = schedule
         return schedule
 
-    def _clear_pending_state(self, *_args: Any) -> None:
-        """Drop optimistic state if the coordinator never confirms."""
-        if self._pending_enabled_state is None:
-            return
-        self._pending_enabled_state = None
-        self._cancel_pending_clear()
-        self.async_write_ha_state()
 
-    def _schedule_pending_clear(self) -> None:
-        """Ensure optimistic state is cleared even when refresh keeps failing.
-
-        Timeout is set to 2x the coordinator update interval to allow for
-        one potentially slow update cycle before reverting optimistic state.
-        """
-        self._cancel_pending_clear()
-        # Scale timeout with coordinator update interval (2x with 60s minimum)
-        timeout_seconds = max(60, int(self.coordinator.update_interval.total_seconds() * 2))
-        self._pending_clear_unsub = async_call_later(
-            self.hass,
-            timeout_seconds,
-            self._clear_pending_state,
-        )
-
-    def _cancel_pending_clear(self) -> None:
-        """Cancel any scheduled optimistic-state reset."""
-        if self._pending_clear_unsub:
-            self._pending_clear_unsub()
-            self._pending_clear_unsub = None
-
-
-class DeviceEnableSwitch(CoordinatorEntity, SwitchEntity):
+class DeviceEnableSwitch(BaseEnableSwitch):
     """Switch that enables or disables automatic control for a climate device.
 
     When a device is disabled, it will not be controlled by any schedule.
@@ -289,7 +338,6 @@ class DeviceEnableSwitch(CoordinatorEntity, SwitchEntity):
     """
 
     _attr_icon = "mdi:thermostat"
-    _attr_should_poll = False
 
     def __init__(
         self,
@@ -298,9 +346,8 @@ class DeviceEnableSwitch(CoordinatorEntity, SwitchEntity):
         device_entity_id: str,
     ) -> None:
         """Initialise the switch."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, entry)
         self._device_entity_id = device_entity_id
-        self._entry_id = entry.entry_id
 
         slug_entry = slugify(entry.entry_id)
         # Extract device name from entity_id (e.g., climate.bedroom_ac -> bedroom_ac)
@@ -311,18 +358,6 @@ class DeviceEnableSwitch(CoordinatorEntity, SwitchEntity):
             device=device_slug,
         )
         self._attr_unique_id = f"{entry.entry_id}_device_{device_entity_id}_enabled"
-        self._pending_enabled_state: Optional[bool] = None
-        self._pending_clear_unsub: Optional[Callable[[], None]] = None
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return device info."""
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry_id)},
-            name="Heating Control",
-            manufacturer="Heating Control",
-            model="Smart Heating Schedule",
-        )
 
     @property
     def name(self) -> str:
@@ -371,43 +406,12 @@ class DeviceEnableSwitch(CoordinatorEntity, SwitchEntity):
 
         return attrs
 
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Enable automatic control for the device."""
+    async def _async_set_enabled(self, enabled: bool) -> None:
+        """Set the device enabled state via coordinator."""
         await self.coordinator.async_set_device_enabled(
             device_entity_id=self._device_entity_id,
-            enabled=True,
+            enabled=enabled,
         )
-        # Optimistically expose the new state until the coordinator refresh completes
-        self._pending_enabled_state = True
-        self._schedule_pending_clear()
-        self.async_write_ha_state()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Disable automatic control for the device."""
-        await self.coordinator.async_set_device_enabled(
-            device_entity_id=self._device_entity_id,
-            enabled=False,
-        )
-        # Optimistically expose the new state until the coordinator refresh completes
-        self._pending_enabled_state = False
-        self._schedule_pending_clear()
-        self.async_write_ha_state()
-
-    def _handle_coordinator_update(self) -> None:
-        """Clear any pending state overrides when fresh data arrives."""
-        self._cancel_pending_clear()
-        # Clear optimistic state on failed updates to revert UI to actual state
-        if self.coordinator.last_update_success is False and self._pending_enabled_state is not None:
-            self._pending_enabled_state = None
-        elif self.coordinator.last_update_success:
-            # Successful update - optimistic state no longer needed
-            self._pending_enabled_state = None
-        super()._handle_coordinator_update()
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Clean up any scheduled callbacks."""
-        self._cancel_pending_clear()
-        await super().async_will_remove_from_hass()
 
     def _friendly_device_name(self) -> str:
         """Return a friendly name for the device.
@@ -439,27 +443,3 @@ class DeviceEnableSwitch(CoordinatorEntity, SwitchEntity):
         # Fall back to extracting from entity_id
         name = self._device_entity_id.replace("climate.", "")
         return name.replace("_", " ").title()
-
-    def _clear_pending_state(self, *_args: Any) -> None:
-        """Drop optimistic state if the coordinator never confirms."""
-        if self._pending_enabled_state is None:
-            return
-        self._pending_enabled_state = None
-        self._cancel_pending_clear()
-        self.async_write_ha_state()
-
-    def _schedule_pending_clear(self) -> None:
-        """Ensure optimistic state is cleared even when refresh keeps failing."""
-        self._cancel_pending_clear()
-        timeout_seconds = max(60, int(self.coordinator.update_interval.total_seconds() * 2))
-        self._pending_clear_unsub = async_call_later(
-            self.hass,
-            timeout_seconds,
-            self._clear_pending_state,
-        )
-
-    def _cancel_pending_clear(self) -> None:
-        """Cancel any scheduled optimistic-state reset."""
-        if self._pending_clear_unsub:
-            self._pending_clear_unsub()
-            self._pending_clear_unsub = None

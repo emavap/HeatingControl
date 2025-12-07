@@ -68,6 +68,11 @@ __all__ = [
     "DASHBOARD_URL_PATH_TEMPLATE",
     "DASHBOARD_CREATED_KEY",
     "DASHBOARD_ENTRY_ID_LENGTH",
+    # Dashboard status indicators
+    "STATUS_OFF",
+    "STATUS_ON",
+    "STATUS_IDLE",
+    "STATUS_WAIT",
 ]
 
 DOMAIN = "heating_control"
@@ -184,3 +189,9 @@ DASHBOARD_ICON = "mdi:thermostat"
 DASHBOARD_URL_PATH_TEMPLATE = "heating-control-{entry_id}"
 DASHBOARD_CREATED_KEY = "dashboard_url"
 DASHBOARD_ENTRY_ID_LENGTH = 8  # Length of entry_id prefix for dashboard URL
+
+# Dashboard status indicators
+STATUS_OFF = "[OFF]"
+STATUS_ON = "[ON]"
+STATUS_IDLE = "[IDLE]"
+STATUS_WAIT = "[WAIT]"
