@@ -475,34 +475,44 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         current_config = self.config_entry.options or self.config_entry.data
         default_trackers = _extract_trackers(current_config)
 
-        data_schema = vol.Schema(
-            {
-                vol.Optional(
-                    CONF_DEVICE_TRACKERS,
-                    default=default_trackers,
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="device_tracker", multiple=True)
-                ),
-                vol.Required(
-                    CONF_AUTO_HEATING_ENABLED,
-                    default=current_config.get(CONF_AUTO_HEATING_ENABLED, True)
-                ): selector.BooleanSelector(),
-                vol.Optional(
-                    CONF_OUTDOOR_TEMP_SENSOR,
-                    default=current_config.get(CONF_OUTDOOR_TEMP_SENSOR),
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain="sensor", multiple=False)
-                ),
-                vol.Optional(
-                    CONF_OUTDOOR_TEMP_THRESHOLD,
-                    default=current_config.get(CONF_OUTDOOR_TEMP_THRESHOLD, DEFAULT_OUTDOOR_TEMP_THRESHOLD)
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=-20.0, max=40.0, step=0.5, unit_of_measurement="°C"
-                    )
-                ),
-            }
+        # Build schema fields - handle optional outdoor temp sensor carefully
+        schema_fields = {
+            vol.Optional(
+                CONF_DEVICE_TRACKERS,
+                default=default_trackers,
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="device_tracker", multiple=True)
+            ),
+            vol.Required(
+                CONF_AUTO_HEATING_ENABLED,
+                default=current_config.get(CONF_AUTO_HEATING_ENABLED, True)
+            ): selector.BooleanSelector(),
+        }
+
+        # Only add default for outdoor_temp_sensor if it's configured
+        current_sensor = current_config.get(CONF_OUTDOOR_TEMP_SENSOR)
+        if current_sensor:
+            schema_fields[vol.Optional(
+                CONF_OUTDOOR_TEMP_SENSOR,
+                default=current_sensor,
+            )] = selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor", multiple=False)
+            )
+        else:
+            schema_fields[vol.Optional(CONF_OUTDOOR_TEMP_SENSOR)] = selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor", multiple=False)
+            )
+
+        schema_fields[vol.Optional(
+            CONF_OUTDOOR_TEMP_THRESHOLD,
+            default=current_config.get(CONF_OUTDOOR_TEMP_THRESHOLD, DEFAULT_OUTDOOR_TEMP_THRESHOLD)
+        )] = selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=-20.0, max=40.0, step=0.5, unit_of_measurement="°C"
+            )
         )
+
+        data_schema = vol.Schema(schema_fields)
 
         return self.async_show_form(step_id="init", data_schema=data_schema)
 
