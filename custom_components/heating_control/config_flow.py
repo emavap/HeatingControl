@@ -17,6 +17,8 @@ from .const import (
     CONF_AUTO_HEATING_ENABLED,
     CONF_CLIMATE_DEVICES,
     CONF_DEVICE_TRACKERS,
+    CONF_OUTDOOR_TEMP_SENSOR,
+    CONF_OUTDOOR_TEMP_THRESHOLD,
     CONF_SCHEDULE_AWAY_HVAC_MODE,
     CONF_SCHEDULE_AWAY_TEMPERATURE,
     CONF_SCHEDULE_DEVICE_TRACKERS,
@@ -29,14 +31,19 @@ from .const import (
     CONF_SCHEDULE_NAME,
     CONF_SCHEDULE_ONLY_WHEN_HOME,
     CONF_SCHEDULE_START,
+    CONF_SCHEDULE_TEMP_CONDITION,
     CONF_SCHEDULE_TEMPERATURE,
     CONF_SCHEDULES,
+    DEFAULT_OUTDOOR_TEMP_THRESHOLD,
     DEFAULT_SCHEDULE_FAN_MODE,
     DEFAULT_SCHEDULE_HVAC_MODE,
     DEFAULT_SCHEDULE_START,
     DEFAULT_SCHEDULE_TEMPERATURE,
     DOMAIN,
     HVAC_MODE_OPTIONS,
+    TEMP_CONDITION_ALWAYS,
+    TEMP_CONDITION_OPTIONS,
+    TEMP_CONDITION_WARM,
     TEMPERATURE_MAX,
     TEMPERATURE_MIN,
     TEMPERATURE_STEP,
@@ -108,6 +115,7 @@ def _build_schedule_config(
         CONF_SCHEDULE_DEVICES: schedule_devices,
         CONF_SCHEDULE_TEMPERATURE: user_input.get(CONF_SCHEDULE_TEMPERATURE, DEFAULT_SCHEDULE_TEMPERATURE),
         CONF_SCHEDULE_FAN_MODE: user_input.get(CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE),
+        CONF_SCHEDULE_TEMP_CONDITION: user_input.get(CONF_SCHEDULE_TEMP_CONDITION, TEMP_CONDITION_ALWAYS),
     }
 
 
@@ -211,6 +219,17 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.EntitySelectorConfig(domain="device_tracker", multiple=True)
                 ),
                 vol.Required(CONF_AUTO_HEATING_ENABLED, default=True): selector.BooleanSelector(),
+                vol.Optional(CONF_OUTDOOR_TEMP_SENSOR): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="sensor", multiple=False)
+                ),
+                vol.Optional(
+                    CONF_OUTDOOR_TEMP_THRESHOLD,
+                    default=DEFAULT_OUTDOOR_TEMP_THRESHOLD
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=-20.0, max=40.0, step=0.5, unit_of_measurement="°C"
+                    )
+                ),
             }
         )
 
@@ -377,6 +396,13 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                vol.Optional(CONF_SCHEDULE_TEMP_CONDITION, default=TEMP_CONDITION_ALWAYS): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=TEMP_CONDITION_OPTIONS,
+                        multiple=False,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
             }
         )
 
@@ -388,7 +414,7 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "info": (
                     "Configure a schedule with a start time; it stays active until the next schedule starts. "
                     "Select HVAC modes and temperatures for when people are home, and optionally different settings "
-                    "for when everyone is away."
+                    "for when everyone is away. Use 'Temperature Condition' to activate this schedule only when outdoor temperature is cold or warm."
                 )
             }
         )
@@ -461,6 +487,20 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                     CONF_AUTO_HEATING_ENABLED,
                     default=current_config.get(CONF_AUTO_HEATING_ENABLED, True)
                 ): selector.BooleanSelector(),
+                vol.Optional(
+                    CONF_OUTDOOR_TEMP_SENSOR,
+                    default=current_config.get(CONF_OUTDOOR_TEMP_SENSOR),
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="sensor", multiple=False)
+                ),
+                vol.Optional(
+                    CONF_OUTDOOR_TEMP_THRESHOLD,
+                    default=current_config.get(CONF_OUTDOOR_TEMP_THRESHOLD, DEFAULT_OUTDOOR_TEMP_THRESHOLD)
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=-20.0, max=40.0, step=0.5, unit_of_measurement="°C"
+                    )
+                ),
             }
         )
 
@@ -638,6 +678,13 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                vol.Optional(CONF_SCHEDULE_TEMP_CONDITION, default=TEMP_CONDITION_ALWAYS): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=TEMP_CONDITION_OPTIONS,
+                        multiple=False,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
             }
         )
 
@@ -649,7 +696,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                 "info": (
                     "Configure a schedule with a start time; it stays active until the next schedule starts. "
                     "Select HVAC modes and temperatures for when people are home, and optionally different settings "
-                    "for when everyone is away."
+                    "for when everyone is away. Use 'Temperature Condition' to activate this schedule only when outdoor temperature is cold or warm."
                 )
             }
         )
@@ -817,6 +864,17 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                vol.Optional(
+                    CONF_SCHEDULE_TEMP_CONDITION,
+                    # Default to WARM for migration - existing schedules without this field
+                    default=current_schedule.get(CONF_SCHEDULE_TEMP_CONDITION, TEMP_CONDITION_WARM)
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=TEMP_CONDITION_OPTIONS,
+                        multiple=False,
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
+                ),
             }
         )
 
@@ -841,6 +899,8 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         if fan_mode:
             schedule_info_parts.append(f"- Fan Mode: {fan_mode}")
 
+        temp_condition = current_schedule.get(CONF_SCHEDULE_TEMP_CONDITION, TEMP_CONDITION_WARM)
+        schedule_info_parts.append(f"- Temperature Condition: {temp_condition.title()}")
         schedule_info_parts.append(f"- Only When Home: {'Yes' if current_schedule.get(CONF_SCHEDULE_ONLY_WHEN_HOME, True) else 'No'}")
 
         devices = current_schedule.get(CONF_SCHEDULE_DEVICES, [])

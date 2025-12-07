@@ -40,6 +40,11 @@ class DummyCoordinator:
         self.config_entry = config_entry
         self.data = snapshot
 
+    @property
+    def config(self) -> dict:
+        """Return merged config from options and data."""
+        return {**self.config_entry.data, **self.config_entry.options}
+
 
 def _build_snapshot(**diagnostic_kwargs) -> HeatingStateSnapshot:
     """Return a snapshot populated with diagnostics data."""
@@ -207,6 +212,8 @@ async def test_device_cards_precede_schedule_cards_in_diagnostics_section() -> N
         is_active=True,
         in_time_window=True,
         presence_ok=True,
+        temp_condition="always",
+        temp_condition_met=True,
         device_count=1,
         devices=("climate.living_room",),
         schedule_device_trackers=(),

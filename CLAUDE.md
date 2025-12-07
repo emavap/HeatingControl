@@ -4,7 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Home Assistant custom integration that automatically controls climate devices (heaters, air conditioners) based on schedules, presence detection, and time-based rules. The integration directly manages HVAC devices without requiring additional automations.
+This is a Home Assistant custom integration that automatically controls climate devices (heaters, air conditioners) based on schedules, presence detection, outdoor temperature conditions, and time-based rules. The integration directly manages HVAC devices without requiring additional automations.
+
+### Key Features
+
+- **Schedule-based control**: Define time windows when devices should be active
+- **Presence detection**: Automatically adjust behavior when people are home or away
+- **Outdoor temperature conditions**: Enable/disable schedules based on outdoor temperature (cold/warm mode)
+- **Multi-device support**: Control multiple climate devices with different schedules
+- **Away mode settings**: Define alternative settings when nobody is home
+- **Auto-generated dashboard**: Lovelace dashboard showing all controls and status
 
 ## Development Commands
 
@@ -45,6 +54,7 @@ Coordinator (_async_update_data)
     ↓
 1. Calculate State (_calculate_heating_state)
    - Evaluate presence (anyone_home, everyone_away)
+   - Evaluate outdoor temperature (cold/warm state)
    - Evaluate all schedules → ScheduleDecisions
    - Aggregate per-device → DeviceDecisions
     ↓
@@ -64,6 +74,7 @@ Coordinator (_async_update_data)
 **`coordinator.py`** - The brain of the integration
 - `HeatingControlCoordinator`: DataUpdateCoordinator that orchestrates the entire decision pipeline
 - `_calculate_heating_state()`: Pure calculation function that evaluates schedules and builds decisions
+- `_get_outdoor_temp_state()`: Reads outdoor temperature sensor and determines cold/warm state
 - `_derive_auto_end_times()`: Calculates when schedules end based on per-device timelines
 - `_detect_state_transitions()`: Determines if control application is needed (presence/schedule changes)
 - Schedule evaluation uses "most recent start time wins" precedence when multiple schedules target same device
@@ -76,14 +87,14 @@ Coordinator (_async_update_data)
 
 **`models.py`** - Immutable data structures
 - `HeatingStateSnapshot`: Complete state for one decision cycle
-- `ScheduleDecision`: Per-schedule evaluation result
+- `ScheduleDecision`: Per-schedule evaluation result (includes temp_condition and temp_condition_met)
 - `DeviceDecision`: Per-device target state (hvac_mode, temp, fan)
-- `DiagnosticsSnapshot`: Metadata for debugging
+- `DiagnosticsSnapshot`: Metadata for debugging (includes outdoor_temp and outdoor_temp_state)
 
 **`config_flow.py`** - Multi-step configuration wizard
-- Step 1: Global settings (device trackers, auto heating toggle)
+- Step 1: Global settings (device trackers, auto heating toggle, outdoor temp sensor, threshold)
 - Step 2: Select climate devices to manage
-- Step 3: Manage schedules (add/edit/delete)
+- Step 3: Manage schedules (add/edit/delete with temperature condition selection)
 - Schedule management includes validation and confirmation dialogs
 
 **`binary_sensor.py`, `sensor.py`, `switch.py`** - Entity platform implementations
@@ -95,7 +106,8 @@ Coordinator (_async_update_data)
 
 **`dashboard.py`** - Auto-generated Lovelace dashboard
 - `HeatingControlDashboardStrategy`: Generates single-column layout
-- Shows thermostat cards, schedule status, diagnostics
+- Shows thermostat cards, schedule status, outdoor temperature mode, diagnostics
+- Status grid displays: presence, outdoor temp (cold/warm), active schedules, active devices
 - Automatically created on integration setup
 
 ### Schedule Precedence Logic
@@ -145,6 +157,8 @@ Configuration is stored in `config_entry.data` or `config_entry.options`:
 {
     "device_trackers": ["device_tracker.person1", "device_tracker.person2"],
     "automatic_heating_enabled": True,
+    "outdoor_temp_sensor": "sensor.outdoor_temperature",  # Optional
+    "outdoor_temp_threshold": 5.0,  # °C - default threshold for cold/warm mode
     "climate_devices": ["climate.bedroom_ac", "climate.kitchen_ac"],
     "disabled_devices": ["climate.kitchen_ac"],  # Devices excluded from automatic control
     "schedules": [
@@ -155,6 +169,7 @@ Configuration is stored in `config_entry.data` or `config_entry.options`:
             "start_time": "07:00",
             "end_time": "10:00",  # Optional, auto-calculated if omitted
             "hvac_mode": "heat",  # or "cool", "off"
+            "temp_condition": "cold",  # "always", "cold", or "warm"
             "only_when_home": True,
             "schedule_device_trackers": [],  # Optional per-schedule trackers
             "away_hvac_mode": "off",  # Optional away mode
@@ -219,130 +234,40 @@ The integration automatically creates a dashboard on setup:
 ### Services
 
 `heating_control.set_schedule_enabled` - Enable/disable schedules programmatically
+
 - Parameters: `entry_id` (optional), `schedule_id` or `schedule_name`, `enabled` (bool)
 - Persists to config_entry and triggers `force_update` for immediate application
 
-### Schedule Selection Bug Fix (2025-01)
+### Outdoor Temperature Conditions
 
-**Issue**: Dashboard could show the wrong active schedule for a device, potentially displaying a future schedule that hasn't started yet or a schedule that's no longer in its time window.
+The integration supports temperature-conditional schedules that automatically enable/disable based on outdoor temperature:
 
-**Root Cause**: The `_select_device_targets()` function in coordinator.py selected schedules based on "freshness" (most recent start time) but didn't validate that the current time was actually within the selected schedule's time window. This created edge cases where:
-- Schedule end times derived via `_derive_auto_end_times()` might not be perfectly synchronized with the selection logic
-- Boundary conditions at schedule transitions could select the wrong schedule momentarily
-- The dashboard would display incorrect "Active Schedule" information for devices
+**Global Configuration:**
 
-**Fix Applied** (coordinator.py lines 541-614):
-1. Added `start_time` and `end_time` to device_builder entries (line 498-499)
-2. Modified `_select_device_targets()` to accept `now_hm` parameter
-3. Added explicit time window validation before schedule selection using `_is_time_in_schedule()`
-4. Filter out any schedules not currently in their time window before picking the "best" one
-5. Added debug logging to trace schedule selection decisions
+- `outdoor_temp_sensor`: Optional Home Assistant sensor entity providing outdoor temperature
+- `outdoor_temp_threshold`: Temperature threshold in °C (default: 5°C)
 
-**Validation**: All 53 existing tests continue to pass, confirming no regressions.
+**Per-Schedule Configuration:**
 
-### Dashboard Presence Indicator Bug Fix (2025-01)
+- `temp_condition`: One of `"always"`, `"cold"`, or `"warm"`
 
-**Issue**: Dashboard schedule cards showed inverted presence indicators:
-- Showed ✖ (X mark) when people were home
-- Showed ✓ (check mark) when nobody was home
+**Behavior:**
 
-**Root Cause**: The `_format_schedule_label()` function in dashboard.py (line 640) had inverted logic checking `if not decision.presence_ok` instead of `if decision.presence_ok`.
+- **Cold schedules**: Only active when `outdoor_temp < threshold`
+- **Warm schedules**: Only active when `outdoor_temp >= threshold`
+- **Always schedules**: Active regardless of outdoor temperature
+- **Sensor unavailable/not configured**: Defaults to "warm" state (warm schedules active)
 
-The `presence_ok` field means "presence requirement is satisfied" (True = someone is home when required, or home not required). The dashboard was displaying the opposite of what it should.
+**Migration from Previous Versions:**
 
-**Fix Applied** (dashboard.py lines 638-644):
-Changed from:
-```python
-if not decision.presence_ok and decision.enabled:
-    presence_status += " ❌"
-else:
-    presence_status += " ✓"
-```
+- Existing schedules without `temp_condition` are treated as "warm" schedules
+- New schedules default to "always" in the UI
+- Default threshold is 5°C for migration compatibility
 
-To:
-```python
-if decision.presence_ok:
-    presence_status += " ✓"
-elif decision.enabled:
-    presence_status += " ❌"
-```
+**Dashboard Display:**
 
-This now matches the correct logic already present in lines 498-501 of the same file.
-
-**Validation**: All 53 existing tests continue to pass.
-
-### Per-Schedule Tracker Presence Bug Fix (2025-01)
-
-**Issue**: Schedules showed "Home required ✖" indicator even when someone was home. Global presence sensors (binary_sensor.heating_control_everyone_away) showed correct state (Off = someone home), but schedule cards displayed incorrect presence indicators.
-
-**Root Cause**: The coordinator's per-schedule device tracker handling did not properly validate tracker entities before evaluating presence. When schedules had:
-- Invalid tracker entity IDs (deleted devices)
-- `None` or empty string values in the tracker list
-- Any combination of invalid trackers
-
-The system would attempt to evaluate them, receive `False` from all checks, and incorrectly determine nobody was home. This happened even when global device trackers correctly showed someone was home.
-
-**Fix Applied** (coordinator.py lines 407-424):
-
-Added two-stage filtering:
-1. **Filter falsy values**: Remove `None`, empty strings from tracker list
-2. **Validate entity existence**: Check if each tracker has a state object in Home Assistant
-3. **Fallback logic**: Only use per-schedule presence if valid trackers exist; otherwise fall back to global presence
-
-Changed from:
-```python
-schedule_trackers = schedule.get(CONF_SCHEDULE_DEVICE_TRACKERS, [])
-if schedule_trackers:
-    # Schedule has specific trackers: check if any are home
-    schedule_anyone_home = any(
-        self._is_tracker_home(tracker) for tracker in schedule_trackers
-    )
-else:
-    # No specific trackers: fall back to global presence
-    schedule_anyone_home = anyone_home
-```
-
-To:
-```python
-schedule_trackers = schedule.get(CONF_SCHEDULE_DEVICE_TRACKERS, [])
-# Filter out None, empty strings, and other falsy values
-valid_schedule_trackers = [t for t in schedule_trackers if t]
-
-# Check if any valid trackers actually exist (have state objects)
-trackers_with_states = [
-    t for t in valid_schedule_trackers if self.hass.states.get(t) is not None
-]
-
-if trackers_with_states:
-    # Schedule has specific trackers with valid states: check if any are home
-    schedule_anyone_home = any(
-        self._is_tracker_home(tracker) for tracker in trackers_with_states
-    )
-else:
-    # No specific trackers or all invalid: fall back to global presence
-    schedule_anyone_home = anyone_home
-```
-
-**Additional Changes** (coordinator.py lines 331-352):
-
-Enhanced `_is_tracker_home()` method with debug logging:
-- Logs when entity_id is empty or None
-- Logs when tracker entity doesn't exist in Home Assistant
-- Logs each tracker state comparison for debugging
-
-This helps diagnose future presence detection issues by checking Home Assistant logs.
-
-**Test Coverage** (test_calculate_heating_state.py):
-
-Added 4 comprehensive tests:
-- `test_schedule_with_invalid_per_schedule_trackers`: Tests `[None, ""]` values
-- `test_schedule_with_nonexistent_per_schedule_trackers`: Tests deleted entity IDs
-- `test_schedule_with_empty_per_schedule_trackers_list`: Tests empty `[]` fallback
-- `test_schedule_with_valid_per_schedule_trackers_not_home`: Tests proper override behavior
-
-**Validation**: All 61 tests pass (4 new tests added).
-
-**Impact**: Schedules with no valid per-schedule trackers now correctly use global presence detection, showing "Home required ✓" when someone is home based on global device trackers.
+- Status grid shows outdoor temperature with cold (❄️) or warm (☀️) icon
+- Schedule cards show temperature condition status (e.g., "Cold only: ✓" or "Cold only: ✗")
 
 ## Code Patterns to Follow
 

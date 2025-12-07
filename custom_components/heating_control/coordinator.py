@@ -19,6 +19,8 @@ from .const import (
     CONF_CLIMATE_DEVICES,
     CONF_DEVICE_TRACKERS,
     CONF_DISABLED_DEVICES,
+    CONF_OUTDOOR_TEMP_SENSOR,
+    CONF_OUTDOOR_TEMP_THRESHOLD,
     CONF_SCHEDULES,
     CONF_SCHEDULE_DEVICES,
     CONF_SCHEDULE_DEVICE_TRACKERS,
@@ -32,8 +34,10 @@ from .const import (
     CONF_SCHEDULE_AWAY_HVAC_MODE,
     CONF_SCHEDULE_AWAY_TEMPERATURE,
     CONF_SCHEDULE_START,
+    CONF_SCHEDULE_TEMP_CONDITION,
     CONF_SCHEDULE_TEMPERATURE,
     DEFAULT_FINAL_SETTLE,
+    DEFAULT_OUTDOOR_TEMP_THRESHOLD,
     DEFAULT_SCHEDULE_END,
     DEFAULT_SCHEDULE_FAN_MODE,
     DEFAULT_SCHEDULE_HVAC_MODE,
@@ -41,6 +45,9 @@ from .const import (
     DEFAULT_SCHEDULE_TEMPERATURE,
     DEFAULT_SETTLE_SECONDS,
     DOMAIN,
+    TEMP_CONDITION_ALWAYS,
+    TEMP_CONDITION_COLD,
+    TEMP_CONDITION_WARM,
     UPDATE_CYCLE_TIMEOUT,
     UPDATE_INTERVAL,
     WATCHDOG_STUCK_THRESHOLD,
@@ -619,11 +626,15 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
         auto_heating_enabled = config.get(CONF_AUTO_HEATING_ENABLED, True)
 
+        # Get outdoor temperature state for conditional schedules
+        outdoor_temp, outdoor_temp_state = self._get_outdoor_temp_state(config)
+
         schedule_decisions, device_builders = self._evaluate_schedules(
             config,
             now_hm,
             anyone_home,
             auto_heating_enabled,
+            outdoor_temp_state,
         )
 
         device_decisions = self._finalize_device_decisions(
@@ -643,6 +654,8 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             active_devices=sum(
                 dec.should_be_active for dec in device_decisions.values()
             ),
+            outdoor_temp=outdoor_temp,
+            outdoor_temp_state=outdoor_temp_state,
         )
 
         return HeatingStateSnapshot(
@@ -695,12 +708,55 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         )
         return is_home
 
+    def _get_outdoor_temp_state(self, config: Dict[str, Any]) -> Tuple[Optional[float], str]:
+        """Get outdoor temperature and determine if it's 'cold' or 'warm'.
+
+        Returns:
+            Tuple of (outdoor_temp, temp_state) where temp_state is 'cold' or 'warm'.
+            If sensor is unavailable, returns (None, 'warm') as a safe default.
+        """
+        sensor_entity = config.get(CONF_OUTDOOR_TEMP_SENSOR)
+        threshold = config.get(CONF_OUTDOOR_TEMP_THRESHOLD, DEFAULT_OUTDOOR_TEMP_THRESHOLD)
+
+        if not sensor_entity:
+            # No sensor configured - treat as "always" condition (warm is safe default)
+            _LOGGER.debug("No outdoor temperature sensor configured")
+            return None, "warm"
+
+        state = self.hass.states.get(sensor_entity)
+        if not state or state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+            _LOGGER.warning(
+                "Outdoor temperature sensor %s is unavailable, defaulting to 'warm' state",
+                sensor_entity,
+            )
+            return None, "warm"
+
+        try:
+            outdoor_temp = float(state.state)
+        except (ValueError, TypeError):
+            _LOGGER.warning(
+                "Outdoor temperature sensor %s has invalid value '%s', defaulting to 'warm' state",
+                sensor_entity,
+                state.state,
+            )
+            return None, "warm"
+
+        temp_state = "cold" if outdoor_temp < threshold else "warm"
+        _LOGGER.debug(
+            "Outdoor temp: %.1f°C, threshold: %.1f°C, state: %s",
+            outdoor_temp,
+            threshold,
+            temp_state,
+        )
+        return outdoor_temp, temp_state
+
     def _evaluate_schedules(
         self,
         config,
         now_hm: str,
         anyone_home: bool,
         auto_heating_enabled: bool,
+        outdoor_temp_state: str,
     ) -> Tuple[
         Dict[str, ScheduleDecision],
         Dict[str, List[Dict[str, Any]]],
@@ -821,17 +877,35 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 CONF_SCHEDULE_FAN_MODE, DEFAULT_SCHEDULE_FAN_MODE
             )
 
+            # Get temperature condition for this schedule
+            # Note: Default to WARM for migration - existing schedules without this field
+            # will be treated as "warm" schedules (active when outdoor temp >= threshold)
+            temp_condition = schedule.get(CONF_SCHEDULE_TEMP_CONDITION, TEMP_CONDITION_WARM)
+
+            # Evaluate if temperature condition is met
+            if temp_condition == TEMP_CONDITION_ALWAYS:
+                temp_condition_met = True
+            elif temp_condition == TEMP_CONDITION_COLD:
+                temp_condition_met = outdoor_temp_state == "cold"
+            elif temp_condition == TEMP_CONDITION_WARM:
+                temp_condition_met = outdoor_temp_state == "warm"
+            else:
+                # Unknown condition, treat as always
+                temp_condition_met = True
+
             in_time_window = self._is_time_in_schedule(
                 now_hm, start_time, end_time
             )
             presence_ok = schedule_anyone_home or not only_when_home
             has_away_settings = hvac_mode_away is not None
 
-            # Schedule is active if in time window (presence affects settings, not activation)
+            # Schedule is active if in time window AND temperature condition is met
+            # (presence affects settings, not activation)
             is_active = (
                 auto_heating_enabled
                 and enabled
                 and in_time_window
+                and temp_condition_met
             )
 
             # Determine effective settings based on schedule-specific presence
@@ -874,6 +948,8 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 is_active=is_active,
                 in_time_window=in_time_window,
                 presence_ok=presence_ok,
+                temp_condition=temp_condition,
+                temp_condition_met=temp_condition_met,
                 device_count=len(device_entities),
                 devices=tuple(device_entities),
                 schedule_device_trackers=tuple(schedule_trackers),

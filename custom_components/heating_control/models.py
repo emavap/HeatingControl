@@ -29,6 +29,8 @@ class ScheduleDecision:
         is_active: True if schedule is currently controlling devices.
         in_time_window: True if current time is within schedule window.
         presence_ok: True if presence requirement is satisfied.
+        temp_condition: Temperature condition ("always", "cold", "warm").
+        temp_condition_met: True if outdoor temp condition is satisfied.
         device_count: Number of climate devices this schedule controls.
         devices: Tuple of climate entity IDs this schedule controls.
         schedule_device_trackers: Per-schedule device trackers, or empty.
@@ -50,6 +52,8 @@ class ScheduleDecision:
     is_active: bool
     in_time_window: bool
     presence_ok: bool
+    temp_condition: str
+    temp_condition_met: bool
     device_count: int
     devices: Tuple[str, ...]
     schedule_device_trackers: Tuple[str, ...]
@@ -73,6 +77,8 @@ class ScheduleDecision:
             "is_active": self.is_active,
             "in_time_window": self.in_time_window,
             "presence_ok": self.presence_ok,
+            "temp_condition": self.temp_condition,
+            "temp_condition_met": self.temp_condition_met,
             "device_count": self.device_count,
             "devices": list(self.devices),
             "schedule_device_trackers": list(self.schedule_device_trackers),
@@ -131,6 +137,8 @@ class DiagnosticsSnapshot:
         last_update_duration: Duration of last update cycle in seconds.
         timed_out_devices: Tuple of entity IDs that timed out during control.
         watchdog_status: Health status ("healthy", "degraded", "stuck").
+        outdoor_temp: Current outdoor temperature if sensor is configured, None otherwise.
+        outdoor_temp_state: Current outdoor temperature state ("cold" or "warm").
     """
 
     now_time: str
@@ -144,6 +152,8 @@ class DiagnosticsSnapshot:
     last_update_duration: Optional[float] = None
     timed_out_devices: Tuple[str, ...] = tuple()
     watchdog_status: str = "healthy"
+    outdoor_temp: Optional[float] = None
+    outdoor_temp_state: str = "warm"
 
     def as_dict(self) -> Dict[str, object]:
         """Return a dictionary representation used by diagnostics sensors."""
@@ -159,6 +169,8 @@ class DiagnosticsSnapshot:
             "last_update_duration": self.last_update_duration,
             "timed_out_devices": list(self.timed_out_devices),
             "watchdog_status": self.watchdog_status,
+            "outdoor_temp": self.outdoor_temp,
+            "outdoor_temp_state": self.outdoor_temp_state,
         }
 
 

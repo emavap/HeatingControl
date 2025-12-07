@@ -31,6 +31,9 @@ from .const import (
     CONF_CLIMATE_DEVICES,
     CONF_DEVICE_TRACKERS,
     CONF_DISABLED_DEVICES,
+    CONF_OUTDOOR_TEMP_SENSOR,
+    CONF_OUTDOOR_TEMP_THRESHOLD,
+    DEFAULT_OUTDOOR_TEMP_THRESHOLD,
     DEVICE_SWITCH_ENTITY_TEMPLATE,
     DOMAIN,
     ENTITY_DECISION_DIAGNOSTICS,
@@ -120,7 +123,7 @@ class HeatingControlDashboardStrategy(Strategy):
             cards.append(self._build_header_card())
 
             # Quick status grid with buttons
-            cards.append(self._build_status_grid(snapshot, tracker_entities))
+            cards.append(self._build_status_grid(snapshot, tracker_entities, coordinator))
 
             # Climate controls section
             climate_cards = self._build_climate_grid(climate_entities)
@@ -174,7 +177,7 @@ class HeatingControlDashboardStrategy(Strategy):
         }
 
     def _build_status_grid(
-        self, snapshot: Optional["HeatingStateSnapshot"], tracker_entities: Sequence[str]
+        self, snapshot: Optional["HeatingStateSnapshot"], tracker_entities: Sequence[str], coordinator=None
     ) -> Dict[str, Any]:
         """Build a grid of status buttons for at-a-glance system state."""
         diagnostics = getattr(snapshot, "diagnostics", None) if snapshot else None
@@ -187,6 +190,19 @@ class HeatingControlDashboardStrategy(Strategy):
             active_schedules = getattr(diagnostics, "active_schedules", 0)
             total_schedules = getattr(diagnostics, "schedule_count", 0)
             active_devices = getattr(diagnostics, "active_devices", 0)
+
+        # Get outdoor temperature sensor and threshold from config
+        outdoor_temp_sensor = None
+        outdoor_temp_threshold = DEFAULT_OUTDOOR_TEMP_THRESHOLD
+        if coordinator:
+            config = coordinator.config
+            outdoor_temp_sensor = config.get(CONF_OUTDOOR_TEMP_SENSOR)
+            outdoor_temp_threshold = config.get(CONF_OUTDOOR_TEMP_THRESHOLD, DEFAULT_OUTDOOR_TEMP_THRESHOLD)
+
+        # Get outdoor temperature state from diagnostics
+        outdoor_temp = getattr(diagnostics, "outdoor_temp", None) if diagnostics else None
+        outdoor_temp_state = getattr(diagnostics, "outdoor_temp_state", "warm") if diagnostics else "warm"
+        is_cold = outdoor_temp_state == "cold"
 
         buttons: List[Dict[str, Any]] = [
             # Presence button
@@ -237,10 +253,31 @@ class HeatingControlDashboardStrategy(Strategy):
             },
         ]
 
+        # Add outdoor temperature button if sensor is configured
+        if outdoor_temp_sensor:
+            # Show current temp, mode (cold/warm), and threshold
+            if outdoor_temp is not None:
+                temp_display = f"{outdoor_temp:g}°"
+            else:
+                temp_display = "N/A"
+            mode_label = "Cold" if is_cold else "Warm"
+            mode_icon = "mdi:snowflake" if is_cold else "mdi:weather-sunny"
+
+            buttons.insert(1, {
+                "type": "button",
+                "entity": outdoor_temp_sensor,
+                "name": f"{mode_label} (<{outdoor_temp_threshold:g}°)",
+                "icon": mode_icon,
+                "icon_height": "50px",
+                "show_name": True,
+                "show_state": True,
+                "tap_action": {"action": "more-info"},
+            })
+
         grid: Dict[str, Any] = {
             "type": "grid",
             "square": False,
-            "columns": 4,
+            "columns": 5 if outdoor_temp_sensor else 4,
             "cards": buttons,
         }
 
@@ -432,6 +469,17 @@ class HeatingControlDashboardStrategy(Strategy):
                 elif decision.enabled:
                     presence_str = "Home required: Waiting..."
 
+            # Temperature condition status
+            temp_condition_str = ""
+            temp_condition = getattr(decision, "temp_condition", "always")
+            temp_condition_met = getattr(decision, "temp_condition_met", True)
+            if temp_condition != "always":
+                condition_label = "Cold only" if temp_condition == "cold" else "Warm only"
+                if temp_condition_met:
+                    temp_condition_str = f"{condition_label}: ✓"
+                elif decision.enabled:
+                    temp_condition_str = f"{condition_label}: ✗"
+
             # Devices info
             if controlling_count > 0:
                 device_names = [self._friendly_name(d) for d in controlling_devices[:2]]
@@ -452,6 +500,9 @@ class HeatingControlDashboardStrategy(Strategy):
 
             if presence_str:
                 card_entities.append({"type": "text", "name": "Presence", "text": presence_str})
+
+            if temp_condition_str:
+                card_entities.append({"type": "text", "name": "Temp Condition", "text": temp_condition_str})
 
             for mode_line in mode_lines:
                 card_entities.append({"type": "text", "name": "Mode", "text": mode_line})

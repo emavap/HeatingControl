@@ -7,6 +7,8 @@ __all__ = [
     "CONF_DEVICE_TRACKERS",
     "CONF_AUTO_HEATING_ENABLED",
     "CONF_DISABLED_DEVICES",
+    "CONF_OUTDOOR_TEMP_SENSOR",
+    "CONF_OUTDOOR_TEMP_THRESHOLD",
     # Configuration keys - Schedules
     "CONF_SCHEDULES",
     "CONF_SCHEDULE_ID",
@@ -22,7 +24,13 @@ __all__ = [
     "CONF_SCHEDULE_DEVICES",
     "CONF_SCHEDULE_TEMPERATURE",
     "CONF_SCHEDULE_FAN_MODE",
+    "CONF_SCHEDULE_TEMP_CONDITION",
     "CONF_CLIMATE_DEVICES",
+    # Temperature condition values
+    "TEMP_CONDITION_ALWAYS",
+    "TEMP_CONDITION_COLD",
+    "TEMP_CONDITION_WARM",
+    "TEMP_CONDITION_OPTIONS",
     # Default values
     "DEFAULT_SCHEDULE_START",
     "DEFAULT_SCHEDULE_END",
@@ -30,6 +38,7 @@ __all__ = [
     "DEFAULT_SCHEDULE_FAN_MODE",
     "DEFAULT_SCHEDULE_HVAC_MODE",
     "DEFAULT_SCHEDULE_AWAY_HVAC_MODE",
+    "DEFAULT_OUTDOOR_TEMP_THRESHOLD",
     "TEMPERATURE_MIN",
     "TEMPERATURE_MAX",
     "TEMPERATURE_STEP",
@@ -81,6 +90,8 @@ DOMAIN = "heating_control"
 CONF_DEVICE_TRACKERS = "device_trackers"
 CONF_AUTO_HEATING_ENABLED = "automatic_heating_enabled"
 CONF_DISABLED_DEVICES = "disabled_devices"
+CONF_OUTDOOR_TEMP_SENSOR = "outdoor_temp_sensor"
+CONF_OUTDOOR_TEMP_THRESHOLD = "outdoor_temp_threshold"
 
 # Configuration keys - Schedules
 CONF_SCHEDULES = "schedules"
@@ -97,9 +108,22 @@ CONF_SCHEDULE_AWAY_TEMPERATURE = "away_temperature"
 CONF_SCHEDULE_DEVICES = "device_entities"
 CONF_SCHEDULE_TEMPERATURE = "temperature"
 CONF_SCHEDULE_FAN_MODE = "fan_mode"
+CONF_SCHEDULE_TEMP_CONDITION = "temp_condition"
 
 # Configuration keys - Climate devices (just a list of available entities)
 CONF_CLIMATE_DEVICES = "climate_devices"
+
+# Temperature condition values (for outdoor temperature-based schedule selection)
+TEMP_CONDITION_ALWAYS = "always"
+TEMP_CONDITION_COLD = "cold"
+TEMP_CONDITION_WARM = "warm"
+
+# Temperature condition selector options for config flow
+TEMP_CONDITION_OPTIONS = [
+    {"label": "Always (no condition)", "value": "always"},
+    {"label": "Cold only (outdoor temp < threshold)", "value": "cold"},
+    {"label": "Warm only (outdoor temp ≥ threshold)", "value": "warm"},
+]
 
 # Default values
 DEFAULT_SCHEDULE_START = "00:00"
@@ -108,6 +132,7 @@ DEFAULT_SCHEDULE_TEMPERATURE = 20.0
 DEFAULT_SCHEDULE_FAN_MODE = "auto"
 DEFAULT_SCHEDULE_HVAC_MODE = "heat"
 DEFAULT_SCHEDULE_AWAY_HVAC_MODE = "off"
+DEFAULT_OUTDOOR_TEMP_THRESHOLD = 5.0  # °C - default threshold for cold/warm mode (migration default)
 
 # Temperature range for schedule configuration (°C)
 TEMPERATURE_MIN = 5.0

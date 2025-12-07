@@ -6,7 +6,9 @@
         "description": "Configure global heating control settings",
         "data": {
           "device_trackers": "Device Trackers to Observe (optional)",
-          "automatic_heating_enabled": "Enable Automatic Heating"
+          "automatic_heating_enabled": "Enable Automatic Heating",
+          "outdoor_temp_sensor": "Outdoor Temperature Sensor (optional)",
+          "outdoor_temp_threshold": "Temperature Threshold (°C)"
         }
       },
       "select_devices": {
@@ -37,7 +39,8 @@
           "schedule_device_trackers": "Device Trackers for Presence (optional)",
           "away_hvac_mode": "HVAC Mode When Everyone Away (optional)",
           "away_temperature": "Temperature When Away (optional)",
-          "device_entities": "Devices for this Schedule (optional)"
+          "device_entities": "Devices for this Schedule (optional)",
+          "temp_condition": "Temperature Condition"
         }
       }
     },
@@ -60,7 +63,9 @@
         "description": "Update global heating control settings",
         "data": {
           "device_trackers": "Device Trackers to Observe (optional)",
-          "automatic_heating_enabled": "Enable Automatic Heating"
+          "automatic_heating_enabled": "Enable Automatic Heating",
+          "outdoor_temp_sensor": "Outdoor Temperature Sensor (optional)",
+          "outdoor_temp_threshold": "Temperature Threshold (°C)"
         }
       },
       "select_devices": {
@@ -91,7 +96,26 @@
           "schedule_device_trackers": "Device Trackers for Presence (optional)",
           "away_hvac_mode": "HVAC Mode When Everyone Away (optional)",
           "away_temperature": "Temperature When Away (optional)",
-          "device_entities": "Devices for this Schedule (optional)"
+          "device_entities": "Devices for this Schedule (optional)",
+          "temp_condition": "Temperature Condition"
+        }
+      },
+      "edit_schedule": {
+        "title": "Edit Schedule",
+        "description": "{schedule_info}",
+        "data": {
+          "name": "Schedule Name",
+          "enabled": "Schedule Enabled",
+          "hvac_mode": "HVAC Mode (when home)",
+          "temperature": "Target Temperature",
+          "fan_mode": "Fan Mode",
+          "start_time": "Start Time",
+          "only_when_home": "Only Active When Someone is Home",
+          "schedule_device_trackers": "Device Trackers for Presence (optional)",
+          "away_hvac_mode": "HVAC Mode When Everyone Away (optional)",
+          "away_temperature": "Temperature When Away (optional)",
+          "device_entities": "Devices for this Schedule (optional)",
+          "temp_condition": "Temperature Condition"
         }
       }
     },
