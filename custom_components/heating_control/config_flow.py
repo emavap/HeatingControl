@@ -425,15 +425,15 @@ class HeatingControlConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> HeatingControlOptionsFlow:
         """Get the options flow for this handler."""
-        return HeatingControlOptionsFlow(config_entry)
+        return HeatingControlOptionsFlow()
 
 
 class HeatingControlOptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for Heating Control."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+    def __init__(self) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        # Note: self.config_entry is automatically available from parent class
         # Mutable copy of current schedules shown in the options flow
         self._pending_schedules: list[dict[str, Any]] = []
         # Updated global settings staged during the options flow

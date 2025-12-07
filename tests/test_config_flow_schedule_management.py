@@ -124,11 +124,16 @@ def make_options_flow(config_entry) -> HeatingControlOptionsFlow:
     Returns:
         HeatingControlOptionsFlow instance ready for testing
     Process:
-        1. Create instance with config entry
-        2. Initialize internal state (schedules, devices, config)
+        1. Create instance (no config_entry in constructor - it's a property in HA)
+        2. Manually set config_entry for testing (bypasses property setter)
         3. Return ready-to-use flow
     """
-    flow = HeatingControlOptionsFlow(config_entry)
+    flow = HeatingControlOptionsFlow()
+    # In Home Assistant, config_entry is set automatically by the flow manager.
+    # For testing, we set it directly using object.__setattr__ to bypass any property restrictions.
+    object.__setattr__(flow, "_config_entry", config_entry)
+    # Also set it as a regular attribute for compatibility
+    flow.__dict__["config_entry"] = config_entry
     return flow
 
 
