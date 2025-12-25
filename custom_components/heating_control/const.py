@@ -39,6 +39,7 @@ __all__ = [
     "DEFAULT_SCHEDULE_HVAC_MODE",
     "DEFAULT_SCHEDULE_AWAY_HVAC_MODE",
     "DEFAULT_OUTDOOR_TEMP_THRESHOLD",
+    "DEFAULT_OUTDOOR_TEMP_HYSTERESIS",
     "TEMPERATURE_MIN",
     "TEMPERATURE_MAX",
     "TEMPERATURE_STEP",
@@ -134,6 +135,11 @@ DEFAULT_SCHEDULE_FAN_MODE = "auto"
 DEFAULT_SCHEDULE_HVAC_MODE = "heat"
 DEFAULT_SCHEDULE_AWAY_HVAC_MODE = "off"
 DEFAULT_OUTDOOR_TEMP_THRESHOLD = 5.0  # °C - default threshold for cold/warm mode (migration default)
+# Hysteresis for outdoor temperature threshold (Schmitt trigger)
+# Prevents rapid switching when temperature hovers around threshold
+# cold→warm: requires temp >= threshold + hysteresis
+# warm→cold: requires temp < threshold
+DEFAULT_OUTDOOR_TEMP_HYSTERESIS = 1.0  # °C
 
 # Temperature range for schedule configuration (°C)
 TEMPERATURE_MIN = 5.0

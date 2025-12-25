@@ -44,6 +44,17 @@ class ClimateController:
         self._timed_out_devices: set[str] = set()  # Use set to prevent duplicates
         self._force_refresh_devices: set[str] = set()  # Devices that need history ignored
 
+    def clear_history(self) -> None:
+        """Clear command history for all devices.
+
+        This forces the controller to re-send all commands on the next apply,
+        regardless of what was previously sent. Used when a state transition
+        occurs (presence change, outdoor temp change, schedule activation)
+        to override any manual user changes to devices.
+        """
+        _LOGGER.debug("Clearing controller command history for all devices")
+        self._history.clear()
+
     async def async_apply(
         self,
         device_decisions: Iterable[DeviceDecision],

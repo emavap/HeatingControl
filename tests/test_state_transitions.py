@@ -22,6 +22,7 @@ def make_coordinator() -> HeatingControlCoordinator:
     )
     coordinator._previous_schedule_states = None
     coordinator._previous_presence_state = None
+    coordinator._previous_outdoor_temp_state = None
     coordinator._force_update = False
     return coordinator
 
@@ -79,81 +80,83 @@ def snapshot(
 
 
 def test_force_update_flag():
+    """Force update should apply control but NOT reset history (to avoid UI delays)."""
     coordinator = make_coordinator()
     coordinator._force_update = True
     result = coordinator._detect_state_transitions(
         snapshot(anyone_home=True, schedule_states={})
     )
 
-    assert result is True
+    # Force update returns (True, False) - apply but don't reset history
+    assert result == (True, False)
     assert coordinator._force_update is False
 
 
 def test_first_run_triggers_update():
+    """First run should apply control AND reset history (fresh start)."""
     coordinator = make_coordinator()
 
-    assert (
-        coordinator._detect_state_transitions(
-            snapshot(anyone_home=True, schedule_states={})
-        )
-        is True
+    result = coordinator._detect_state_transitions(
+        snapshot(anyone_home=True, schedule_states={})
     )
+    # First run returns (True, True) - apply and reset history
+    assert result == (True, True)
 
 
 def test_presence_change_detected():
+    """Presence change should apply control AND reset history (override manual changes)."""
     coordinator = make_coordinator()
     # Previous state: (is_active, hvac_mode, target_temp, target_fan)
     coordinator._previous_schedule_states = {"morning": (False, "heat", 20.0, "auto")}
     coordinator._previous_presence_state = False
 
-    assert (
-        coordinator._detect_state_transitions(
-            snapshot(anyone_home=True, schedule_states={"morning": False})
-        )
-        is True
+    result = coordinator._detect_state_transitions(
+        snapshot(anyone_home=True, schedule_states={"morning": False})
     )
+    # Presence change returns (True, True) - apply and reset history
+    assert result == (True, True)
 
 
 def test_schedule_activation_detected():
+    """Schedule activation should apply control AND reset history (override manual changes)."""
     coordinator = make_coordinator()
     # Previous state: (is_active, hvac_mode, target_temp, target_fan)
     coordinator._previous_schedule_states = {"morning": (False, "heat", 20.0, "auto")}
     coordinator._previous_presence_state = True
 
-    assert (
-        coordinator._detect_state_transitions(
-            snapshot(anyone_home=True, schedule_states={"morning": True})
-        )
-        is True
+    result = coordinator._detect_state_transitions(
+        snapshot(anyone_home=True, schedule_states={"morning": True})
     )
+    # Schedule activation returns (True, True) - apply and reset history
+    assert result == (True, True)
 
 
 def test_schedule_removed_detected():
+    """Schedule removal should apply control AND reset history (override manual changes)."""
     coordinator = make_coordinator()
     # Previous state: (is_active, hvac_mode, target_temp, target_fan)
     coordinator._previous_schedule_states = {"morning": (True, "heat", 20.0, "auto")}
     coordinator._previous_presence_state = True
 
-    assert (
-        coordinator._detect_state_transitions(
-            snapshot(anyone_home=True, schedule_states={})
-        )
-        is True
+    result = coordinator._detect_state_transitions(
+        snapshot(anyone_home=True, schedule_states={})
     )
+    # Schedule removal returns (True, True) - apply and reset history
+    assert result == (True, True)
 
 
 def test_no_changes_returns_false():
+    """No changes should not apply control and not reset history."""
     coordinator = make_coordinator()
     # Previous state: (is_active, hvac_mode, target_temp, target_fan)
     coordinator._previous_schedule_states = {"morning": (False, "heat", 20.0, "auto")}
     coordinator._previous_presence_state = False
 
-    assert (
-        coordinator._detect_state_transitions(
-            snapshot(anyone_home=False, schedule_states={"morning": False})
-        )
-        is False
+    result = coordinator._detect_state_transitions(
+        snapshot(anyone_home=False, schedule_states={"morning": False})
     )
+    # No changes returns (False, False) - don't apply, don't reset
+    assert result == (False, False)
 
 
 def test_temperature_change_detected():
@@ -207,7 +210,8 @@ def test_temperature_change_detected():
         diagnostics=diagnostics,
     )
 
-    assert coordinator._detect_state_transitions(snap) is True
+    # Temperature change returns (True, True) - apply and reset history
+    assert coordinator._detect_state_transitions(snap) == (True, True)
 
 
 def test_hvac_mode_change_detected():
@@ -261,7 +265,8 @@ def test_hvac_mode_change_detected():
         diagnostics=diagnostics,
     )
 
-    assert coordinator._detect_state_transitions(snap) is True
+    # HVAC mode change returns (True, True) - apply and reset history
+    assert coordinator._detect_state_transitions(snap) == (True, True)
 
 
 def test_inactive_schedule_settings_change_ignored():
@@ -315,5 +320,5 @@ def test_inactive_schedule_settings_change_ignored():
         diagnostics=diagnostics,
     )
 
-    # Should return False because settings changes for inactive schedules don't trigger updates
-    assert coordinator._detect_state_transitions(snap) is False
+    # Should return (False, False) because settings changes for inactive schedules don't trigger updates
+    assert coordinator._detect_state_transitions(snap) == (False, False)

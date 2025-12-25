@@ -6,7 +6,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 __all__ = ["HeatingControlCoordinator"]
 
@@ -37,6 +37,7 @@ from .const import (
     CONF_SCHEDULE_TEMP_CONDITION,
     CONF_SCHEDULE_TEMPERATURE,
     DEFAULT_FINAL_SETTLE,
+    DEFAULT_OUTDOOR_TEMP_HYSTERESIS,
     DEFAULT_OUTDOOR_TEMP_THRESHOLD,
     DEFAULT_SCHEDULE_END,
     DEFAULT_SCHEDULE_FAN_MODE,
@@ -130,6 +131,9 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         # Key: schedule_id, Value: (is_active, hvac_mode, target_temp, target_fan)
         self._previous_schedule_states: Optional[Dict[str, Tuple[bool, str, Optional[float], Optional[str]]]] = None
         self._previous_presence_state: Optional[bool] = None
+        # Track outdoor temperature state for Schmitt trigger hysteresis
+        # Prevents rapid cold↔warm switching when temp hovers around threshold
+        self._previous_outdoor_temp_state: Optional[str] = None
         self._force_update = False
 
         # Counter for "soft updates" in progress (schedule/device toggles).
@@ -233,10 +237,15 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             self._calculate_heating_state
         )
 
-        should_apply_control = self._detect_state_transitions(snapshot)
+        should_apply_control, should_reset_history = self._detect_state_transitions(snapshot)
 
         if should_apply_control:
             _LOGGER.info("State transition detected, applying control decisions")
+            if should_reset_history:
+                # Real state transitions (presence, outdoor temp, schedule changes)
+                # require resetting controller history to override manual user changes.
+                # This ensures the system takes back control when state changes.
+                self._controller.clear_history()
             timed_out_devices = await self._controller.async_apply(
                 snapshot.device_decisions.values()
             )
@@ -275,16 +284,27 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
         return snapshot
 
-    def _detect_state_transitions(self, snapshot: HeatingStateSnapshot) -> bool:
+    def _detect_state_transitions(
+        self, snapshot: HeatingStateSnapshot
+    ) -> Tuple[bool, bool]:
         """Detect if any schedule states, settings, or presence changed.
 
+        Returns:
+            Tuple of (should_apply_control, should_reset_history):
+            - should_apply_control: Whether to call controller.async_apply()
+            - should_reset_history: Whether to clear controller command history first.
+              This is True for real state transitions (presence, outdoor temp, schedule
+              activation) to override any manual user changes to devices.
+              It's False for force_update (config changes via UI) to avoid delays.
+
         Triggers control application when:
-        - Force update is requested (e.g., config change)
-        - First run (no previous state)
-        - Presence changed (anyone_home)
-        - Schedule activation changed (is_active)
-        - Schedule settings changed (hvac_mode, temperature, fan) for active schedules
-        - Schedule was added/removed
+        - Force update is requested (e.g., config change) - no history reset
+        - First run (no previous state) - with history reset
+        - Presence changed (anyone_home) - with history reset
+        - Outdoor temperature state changed (cold↔warm) - with history reset
+        - Schedule activation changed (is_active) - with history reset
+        - Schedule settings changed (hvac_mode, temperature, fan) for active schedules - with history reset
+        - Schedule was added/removed - with history reset
         """
         if self._force_update:
             _LOGGER.info("Forced update requested")
@@ -295,14 +315,14 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             # Resetting history would cause ALL devices to receive commands
             # even when their target state hasn't changed, creating long
             # delays (5s settle + 2s final per device).
-            return True
+            return (True, False)
 
         if (
             self._previous_schedule_states is None
             or self._previous_presence_state is None
         ):
             _LOGGER.info("First run, applying initial state")
-            return True
+            return (True, True)
 
         if snapshot.anyone_home != self._previous_presence_state:
             _LOGGER.info(
@@ -310,7 +330,21 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 self._previous_presence_state,
                 snapshot.anyone_home,
             )
-            return True
+            return (True, True)
+
+        # Detect outdoor temperature state changes (cold↔warm)
+        # This triggers control application to turn off devices when schedules become inactive
+        current_outdoor_state = snapshot.diagnostics.outdoor_temp_state
+        if (
+            self._previous_outdoor_temp_state is not None
+            and current_outdoor_state != self._previous_outdoor_temp_state
+        ):
+            _LOGGER.info(
+                "Outdoor temperature state changed: %s -> %s",
+                self._previous_outdoor_temp_state,
+                current_outdoor_state,
+            )
+            return (True, True)
 
         for schedule_id, decision in snapshot.schedule_decisions.items():
             current_state = (
@@ -323,7 +357,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
             if previous_state is None:
                 _LOGGER.info("Schedule '%s' was added", decision.name)
-                return True
+                return (True, True)
 
             prev_active, prev_mode, prev_temp, prev_fan = previous_state
             curr_active = decision.is_active
@@ -335,7 +369,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                     prev_active,
                     curr_active,
                 )
-                return True
+                return (True, True)
 
             # Only check settings changes for active schedules
             if curr_active:
@@ -346,7 +380,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                         prev_mode,
                         decision.hvac_mode,
                     )
-                    return True
+                    return (True, True)
 
                 # Compare temperatures with epsilon to avoid floating point issues
                 if prev_temp is None and decision.target_temp is not None:
@@ -355,13 +389,13 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                         decision.name,
                         decision.target_temp,
                     )
-                    return True
+                    return (True, True)
                 if prev_temp is not None and decision.target_temp is None:
                     _LOGGER.info(
                         "Schedule '%s' temperature cleared",
                         decision.name,
                     )
-                    return True
+                    return (True, True)
                 if (
                     prev_temp is not None
                     and decision.target_temp is not None
@@ -373,7 +407,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                         prev_temp,
                         decision.target_temp,
                     )
-                    return True
+                    return (True, True)
 
                 if decision.target_fan != prev_fan:
                     _LOGGER.info(
@@ -382,21 +416,23 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                         prev_fan,
                         decision.target_fan,
                     )
-                    return True
+                    return (True, True)
 
         for schedule_id in self._previous_schedule_states:
             if schedule_id not in snapshot.schedule_decisions:
                 _LOGGER.info("Schedule %s was removed", schedule_id)
-                return True
+                return (True, True)
 
-        return False
+        return (False, False)
 
     def _update_previous_states(self, snapshot: HeatingStateSnapshot) -> None:
         """Update stored state for next cycle comparisons.
 
         Stores full schedule state tuple: (is_active, hvac_mode, target_temp, target_fan)
+        Also stores outdoor temperature state for Schmitt trigger hysteresis.
         """
         self._previous_presence_state = snapshot.anyone_home
+        self._previous_outdoor_temp_state = snapshot.diagnostics.outdoor_temp_state
         self._previous_schedule_states = {
             schedule_id: (
                 decision.is_active,
@@ -629,7 +665,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         # Get outdoor temperature state for conditional schedules
         outdoor_temp, outdoor_temp_state = self._get_outdoor_temp_state(config)
 
-        schedule_decisions, device_builders = self._evaluate_schedules(
+        schedule_decisions, device_builders, devices_with_schedules = self._evaluate_schedules(
             config,
             now_hm,
             anyone_home,
@@ -640,6 +676,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         device_decisions = self._finalize_device_decisions(
             config,
             device_builders,
+            devices_with_schedules,
             now_hm,
         )
 
@@ -711,12 +748,18 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
     def _get_outdoor_temp_state(self, config: Dict[str, Any]) -> Tuple[Optional[float], str]:
         """Get outdoor temperature and determine if it's 'cold' or 'warm'.
 
+        Uses Schmitt trigger (hysteresis) to prevent rapid switching when
+        temperature hovers around the threshold:
+        - warm→cold: requires temp < threshold (e.g., < 5°C)
+        - cold→warm: requires temp >= threshold + hysteresis (e.g., >= 6°C)
+
         Returns:
             Tuple of (outdoor_temp, temp_state) where temp_state is 'cold' or 'warm'.
             If sensor is unavailable, returns (None, 'warm') as a safe default.
         """
         sensor_entity = config.get(CONF_OUTDOOR_TEMP_SENSOR)
         threshold = config.get(CONF_OUTDOOR_TEMP_THRESHOLD, DEFAULT_OUTDOOR_TEMP_THRESHOLD)
+        hysteresis = DEFAULT_OUTDOOR_TEMP_HYSTERESIS
 
         if not sensor_entity:
             # No sensor configured - treat as "always" condition (warm is safe default)
@@ -741,13 +784,37 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             )
             return None, "warm"
 
-        temp_state = "cold" if outdoor_temp < threshold else "warm"
-        _LOGGER.debug(
-            "Outdoor temp: %.1f°C, threshold: %.1f°C, state: %s",
-            outdoor_temp,
-            threshold,
-            temp_state,
-        )
+        # Schmitt trigger logic with hysteresis
+        previous_state = self._previous_outdoor_temp_state
+        if previous_state is None:
+            # First run: use simple threshold comparison
+            temp_state = "cold" if outdoor_temp < threshold else "warm"
+        elif previous_state == "cold":
+            # Currently cold: only switch to warm if temp >= threshold + hysteresis
+            temp_state = "warm" if outdoor_temp >= threshold + hysteresis else "cold"
+        else:
+            # Currently warm: only switch to cold if temp < threshold
+            temp_state = "cold" if outdoor_temp < threshold else "warm"
+
+        # Log state transitions
+        if previous_state != temp_state:
+            _LOGGER.info(
+                "Outdoor temp state transition: %s → %s (temp: %.1f°C, threshold: %.1f°C, hysteresis: %.1f°C)",
+                previous_state or "None",
+                temp_state,
+                outdoor_temp,
+                threshold,
+                hysteresis,
+            )
+        else:
+            _LOGGER.debug(
+                "Outdoor temp: %.1f°C, threshold: %.1f°C (+%.1f°C hysteresis), state: %s",
+                outdoor_temp,
+                threshold,
+                hysteresis,
+                temp_state,
+            )
+
         return outdoor_temp, temp_state
 
     def _evaluate_schedules(
@@ -760,11 +827,20 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
     ) -> Tuple[
         Dict[str, ScheduleDecision],
         Dict[str, List[Dict[str, Any]]],
+        Set[str],
     ]:
-        """Evaluate all configured schedules and prepare device aggregations."""
+        """Evaluate all configured schedules and prepare device aggregations.
+
+        Returns:
+            Tuple of:
+            - schedule_decisions: Per-schedule evaluation results
+            - device_builders: Active schedule entries per device
+            - devices_with_schedules: Set of all devices that have any schedules
+        """
         schedules = config.get(CONF_SCHEDULES, [])
         schedule_decisions: Dict[str, ScheduleDecision] = {}
         device_builders: Dict[str, List[Dict[str, Any]]] = {}
+        devices_with_schedules: Set[str] = set()
 
         now_minutes = _parse_time_to_minutes(now_hm, _LOGGER)
 
@@ -967,6 +1043,10 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 target_fan=effective_fan,
             )
 
+            # Track all devices that have any schedules (for turn-off logic)
+            for device_entity in device_entities:
+                devices_with_schedules.add(device_entity)
+
             if not is_active:
                 continue
 
@@ -986,18 +1066,25 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                     }
                 )
 
-        return schedule_decisions, device_builders
+        return schedule_decisions, device_builders, devices_with_schedules
 
     def _finalize_device_decisions(
         self,
         config,
         device_builders: Dict[str, List[Dict[str, Any]]],
+        devices_with_schedules: Set[str],
         now_hm: str,
     ) -> Dict[str, DeviceDecision]:
         """Create DeviceDecision objects for each configured device.
 
         Disabled devices are excluded from automatic control - they will have
         hvac_mode=None, which causes the controller to skip them entirely.
+
+        Devices with no schedules at all are also left untouched (hvac_mode=None).
+
+        Devices with schedules but no active schedules are turned off (hvac_mode="off").
+        This ensures devices are turned off when schedules become inactive
+        (e.g., due to outdoor temperature condition change).
         """
         all_devices = config.get(CONF_CLIMATE_DEVICES, [])
         disabled_devices = set(config.get(CONF_DISABLED_DEVICES, []))
@@ -1027,7 +1114,16 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
                 now_hm,
             )
 
-            should_be_active = hvac_mode not in (None, "off")
+            # Determine hvac_mode for devices without active schedules:
+            # - Devices with no schedules at all: leave untouched (None)
+            # - Devices with schedules but none active: turn off ("off")
+            if hvac_mode is None:
+                if device_entity in devices_with_schedules:
+                    # Device has schedules but none are active - turn it off
+                    hvac_mode = "off"
+                # else: device has no schedules - leave hvac_mode as None
+
+            should_be_active = hvac_mode is not None and hvac_mode != "off"
 
             device_decisions[device_entity] = DeviceDecision(
                 entity_id=device_entity,
