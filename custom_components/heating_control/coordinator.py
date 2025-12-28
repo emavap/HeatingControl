@@ -17,6 +17,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     CONF_AUTO_HEATING_ENABLED,
     CONF_CLIMATE_DEVICES,
+    CONF_DEVICE_OFF_TEMPERATURES,
     CONF_DEVICE_TRACKERS,
     CONF_DISABLED_DEVICES,
     CONF_OUTDOOR_TEMP_SENSOR,
@@ -122,10 +123,15 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         self.config_entry = config_entry
         self.hass = hass
 
+        # Get per-device off temperature configuration
+        config = config_entry.options or config_entry.data
+        device_off_temperatures = config.get(CONF_DEVICE_OFF_TEMPERATURES, {})
+
         self._controller = ClimateController(
             hass,
             settle_seconds=DEFAULT_SETTLE_SECONDS,
             final_settle=DEFAULT_FINAL_SETTLE,
+            device_off_temperatures=device_off_temperatures,
         )
         # Track schedule states including settings (not just is_active)
         # Key: schedule_id, Value: (is_active, hvac_mode, target_temp, target_fan)
@@ -158,6 +164,14 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
     def config(self) -> Dict[str, Any]:
         """Get current configuration (options or data)."""
         return self.config_entry.options or self.config_entry.data
+
+    def refresh_controller_config(self) -> None:
+        """Refresh controller configuration from current config.
+
+        Call this after config changes to update per-device off temperatures.
+        """
+        device_off_temperatures = self.config.get(CONF_DEVICE_OFF_TEMPERATURES, {})
+        self._controller.update_device_off_temperatures(device_off_temperatures)
 
     def get_schedule_by_id(self, schedule_id: str) -> Optional[Dict[str, Any]]:
         """Get schedule config by ID or name.

@@ -26,6 +26,9 @@ __all__ = [
     "CONF_SCHEDULE_FAN_MODE",
     "CONF_SCHEDULE_TEMP_CONDITION",
     "CONF_CLIMATE_DEVICES",
+    # Per-device off temperature
+    "CONF_DEVICE_OFF_TEMPERATURES",
+    "DEFAULT_OFF_TEMPERATURE",
     # Temperature condition values
     "TEMP_CONDITION_ALWAYS",
     "TEMP_CONDITION_COLD",
@@ -114,6 +117,10 @@ CONF_SCHEDULE_TEMP_CONDITION = "temp_condition"
 
 # Configuration keys - Climate devices (just a list of available entities)
 CONF_CLIMATE_DEVICES = "climate_devices"
+# Per-device off temperature mapping (for thermostats that don't support HVAC off mode)
+CONF_DEVICE_OFF_TEMPERATURES = "device_off_temperatures"
+# Default off temperature when device doesn't support off mode
+DEFAULT_OFF_TEMPERATURE = 10.0
 
 # Temperature condition values (for outdoor temperature-based schedule selection)
 TEMP_CONDITION_ALWAYS = "always"

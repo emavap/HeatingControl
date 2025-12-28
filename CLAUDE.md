@@ -161,6 +161,9 @@ Configuration is stored in `config_entry.data` or `config_entry.options`:
     "outdoor_temp_threshold": 5.0,  # °C - default threshold for cold/warm mode
     "climate_devices": ["climate.bedroom_ac", "climate.kitchen_ac"],
     "disabled_devices": ["climate.kitchen_ac"],  # Devices excluded from automatic control
+    "device_off_temperatures": {  # Optional - for thermostats that don't support off mode
+        "climate.gas_thermostat": 10.0  # Set low temp instead of HVAC off
+    },
     "schedules": [
         {
             "id": "uuid-string",  # Unique identifier (preserved during edits)

@@ -36,10 +36,12 @@ class ClimateController:
         *,
         settle_seconds: int,
         final_settle: int,
+        device_off_temperatures: Optional[Dict[str, float]] = None,
     ) -> None:
         self._hass = hass
         self._settle_seconds = settle_seconds
         self._final_settle = final_settle
+        self._device_off_temperatures = device_off_temperatures or {}
         self._history: Dict[str, _DeviceCommandState] = {}
         self._timed_out_devices: set[str] = set()  # Use set to prevent duplicates
         self._force_refresh_devices: set[str] = set()  # Devices that need history ignored
@@ -54,6 +56,16 @@ class ClimateController:
         """
         _LOGGER.debug("Clearing controller command history for all devices")
         self._history.clear()
+
+    def update_device_off_temperatures(
+        self, device_off_temperatures: Dict[str, float]
+    ) -> None:
+        """Update per-device off temperature configuration.
+
+        For thermostats that don't support HVAC off mode, this specifies
+        a low temperature to set instead (e.g., 10°C).
+        """
+        self._device_off_temperatures = device_off_temperatures
 
     async def async_apply(
         self,
@@ -119,13 +131,32 @@ class ClimateController:
         hvac_mode = hvac_mode or "off"
         should_be_on = hvac_mode != "off"
 
-        state_changed = previous_mode != hvac_mode
+        # Check if device uses off_temperature instead of HVAC off mode
+        off_temperature = self._device_off_temperatures.get(entity_id)
+        use_off_temperature = not should_be_on and off_temperature is not None
+
+        # When using off_temperature, we set a low temp instead of changing HVAC mode
+        if use_off_temperature:
+            # Don't change HVAC mode - device stays in current mode (e.g., heat)
+            # Just set the low temperature to effectively turn it off
+            effective_hvac_mode = previous_mode if previous_mode and previous_mode != "off" else "heat"
+            effective_temp = off_temperature
+        else:
+            effective_hvac_mode = hvac_mode
+            effective_temp = target_temp
+
+        state_changed = previous_mode != effective_hvac_mode
         temp_changed = (
-            should_be_on
-            and target_temp is not None
-            and (previous_temp is None or abs(previous_temp - target_temp) > TEMPERATURE_EPSILON)
+            effective_temp is not None
+            and (previous_temp is None or abs(previous_temp - effective_temp) > TEMPERATURE_EPSILON)
         )
-        fan_changed = should_be_on and target_fan is not None and previous_fan != target_fan
+        # Fan changes only matter when device is actually on (not using off_temperature)
+        fan_changed = (
+            should_be_on
+            and not use_off_temperature
+            and target_fan is not None
+            and previous_fan != target_fan
+        )
 
         if not state_changed and not temp_changed and not fan_changed:
             _LOGGER.debug("No changes required for %s", entity_id)
@@ -208,7 +239,64 @@ class ClimateController:
 
                 if state_changed and hvac_mode_succeeded:
                     await asyncio.sleep(self._final_settle)
+            elif use_off_temperature:
+                # Device doesn't support HVAC off mode - set low temperature instead
+                if state_changed:
+                    # Need to set HVAC mode first (e.g., ensure device is in heat mode)
+                    _LOGGER.info(
+                        "Setting %s to %s mode for off-temperature control",
+                        entity_id,
+                        effective_hvac_mode,
+                    )
+                    try:
+                        await asyncio.wait_for(
+                            self._hass.services.async_call(
+                                "climate",
+                                "set_hvac_mode",
+                                {"entity_id": entity_id, "hvac_mode": effective_hvac_mode},
+                                blocking=True,
+                            ),
+                            timeout=SERVICE_CALL_TIMEOUT,
+                        )
+                        hvac_mode_succeeded = True
+                        await asyncio.sleep(self._settle_seconds)
+                    except asyncio.TimeoutError:
+                        _LOGGER.error(
+                            "Timeout setting HVAC mode for %s (timeout=%ds)",
+                            entity_id,
+                            SERVICE_CALL_TIMEOUT,
+                        )
+                        self._timed_out_devices.add(entity_id)
+
+                if temp_changed:
+                    _LOGGER.info(
+                        "Setting %s off-temperature to %.1f°C (device doesn't support off mode)",
+                        entity_id,
+                        off_temperature,
+                    )
+                    try:
+                        await asyncio.wait_for(
+                            self._hass.services.async_call(
+                                "climate",
+                                "set_temperature",
+                                {"entity_id": entity_id, "temperature": off_temperature},
+                                blocking=True,
+                            ),
+                            timeout=SERVICE_CALL_TIMEOUT,
+                        )
+                        temp_succeeded = True
+                    except asyncio.TimeoutError:
+                        _LOGGER.error(
+                            "Timeout setting off-temperature for %s (timeout=%ds)",
+                            entity_id,
+                            SERVICE_CALL_TIMEOUT,
+                        )
+                        self._timed_out_devices.add(entity_id)
+
+                if state_changed and hvac_mode_succeeded:
+                    await asyncio.sleep(self._final_settle)
             else:
+                # Standard off mode - device supports HVAC off
                 if state_changed:
                     _LOGGER.info("Turning %s OFF", entity_id)
                     try:
@@ -231,12 +319,19 @@ class ClimateController:
                         self._timed_out_devices.add(entity_id)
 
             # Update command history and force refresh status
+            # For off_temperature mode, track the effective values to detect changes correctly
+            history_hvac_mode = effective_hvac_mode if hvac_mode_succeeded else previous_mode
+            history_temp = effective_temp if temp_succeeded else previous_temp
+            history_fan = target_fan if fan_succeeded else previous_fan
+            # For off_temperature, device is technically "on" (in heat mode) so don't clear temp/fan
+            device_active_for_history = should_be_on or use_off_temperature
+
             self._update_device_history(
                 entity_id,
-                hvac_mode if hvac_mode_succeeded else previous_mode,
-                target_temp if temp_succeeded else previous_temp,
-                target_fan if fan_succeeded else previous_fan,
-                should_be_on,
+                history_hvac_mode,
+                history_temp,
+                history_fan,
+                device_active_for_history,
             )
             self._update_force_refresh_status(
                 entity_id,

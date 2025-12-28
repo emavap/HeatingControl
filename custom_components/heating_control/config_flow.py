@@ -16,6 +16,7 @@ from .const import (
     AWAY_HVAC_MODE_OPTIONS,
     CONF_AUTO_HEATING_ENABLED,
     CONF_CLIMATE_DEVICES,
+    CONF_DEVICE_OFF_TEMPERATURES,
     CONF_DEVICE_TRACKERS,
     CONF_OUTDOOR_TEMP_SENSOR,
     CONF_OUTDOOR_TEMP_THRESHOLD,
@@ -34,6 +35,7 @@ from .const import (
     CONF_SCHEDULE_TEMP_CONDITION,
     CONF_SCHEDULE_TEMPERATURE,
     CONF_SCHEDULES,
+    DEFAULT_OFF_TEMPERATURE,
     DEFAULT_OUTDOOR_TEMP_THRESHOLD,
     DEFAULT_SCHEDULE_FAN_MODE,
     DEFAULT_SCHEDULE_HVAC_MODE,
@@ -440,6 +442,8 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         self._global_settings: dict[str, Any] = {}
         # Snapshot of the climate devices selection
         self._selected_climate_entities: list[str] = []
+        # Per-device off temperature settings (for thermostats without off mode)
+        self._device_off_temperatures: dict[str, float] = {}
         # Index of the schedule currently being edited (if any)
         self._active_schedule_index: int | None = None
 
@@ -524,7 +528,11 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             self._selected_climate_entities = user_input.get(CONF_CLIMATE_DEVICES, [])
-            return await self.async_step_manage_schedules()
+            # Load existing off temperatures
+            self._device_off_temperatures = dict(
+                current_config.get(CONF_DEVICE_OFF_TEMPERATURES, {})
+            )
+            return await self.async_step_configure_device_off_temps()
 
         data_schema = vol.Schema(
             {
@@ -538,6 +546,64 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
         )
 
         return self.async_show_form(step_id="select_devices", data_schema=data_schema)
+
+    async def async_step_configure_device_off_temps(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Configure per-device off temperature for thermostats that don't support off mode.
+
+        Some thermostats (like gas boilers) don't support HVAC off mode.
+        For these devices, set a low temperature (e.g., 10°C) to use instead.
+        Leave blank for devices that support normal off mode.
+        """
+        if user_input is not None:
+            # Process user input - build device_off_temperatures dict
+            self._device_off_temperatures = {}
+            for entity_id in self._selected_climate_entities:
+                # Create a safe key from entity_id
+                safe_key = entity_id.replace(".", "_")
+                temp_value = user_input.get(safe_key)
+                if temp_value is not None and temp_value > 0:
+                    self._device_off_temperatures[entity_id] = temp_value
+            return await self.async_step_manage_schedules()
+
+        # Build form with a temperature field for each selected device
+        schema_fields = {}
+        for entity_id in self._selected_climate_entities:
+            # Get friendly name from state if available
+            state = self.hass.states.get(entity_id)
+            friendly_name = (
+                state.attributes.get("friendly_name", entity_id)
+                if state
+                else entity_id
+            )
+            # Create a safe key from entity_id (periods not allowed in vol keys)
+            safe_key = entity_id.replace(".", "_")
+            # Get existing value if any
+            current_value = self._device_off_temperatures.get(entity_id)
+            schema_fields[vol.Optional(
+                safe_key,
+                default=current_value,
+                description={"suggested_value": current_value}
+            )] = selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=5.0,
+                    max=20.0,
+                    step=0.5,
+                    unit_of_measurement="°C",
+                    mode="box",
+                )
+            )
+
+        data_schema = vol.Schema(schema_fields)
+
+        return self.async_show_form(
+            step_id="configure_device_off_temps",
+            data_schema=data_schema,
+            description_placeholders={
+                "device_count": str(len(self._selected_climate_entities)),
+            },
+        )
 
     async def async_step_manage_schedules(
         self, user_input: dict[str, Any] | None = None
@@ -561,6 +627,7 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
                 config_data = {
                     **self._global_settings,
                     CONF_CLIMATE_DEVICES: self._selected_climate_entities,
+                    CONF_DEVICE_OFF_TEMPERATURES: self._device_off_temperatures,
                     CONF_SCHEDULES: self._pending_schedules,
                 }
                 return self.async_create_entry(title="", data=config_data)
