@@ -550,59 +550,61 @@ class HeatingControlOptionsFlow(config_entries.OptionsFlow):
     async def async_step_configure_device_off_temps(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Configure per-device off temperature for thermostats that don't support off mode.
+        """Configure which devices need off-temperature instead of HVAC off mode.
 
         Some thermostats (like gas boilers) don't support HVAC off mode.
-        For these devices, set a low temperature (e.g., 10°C) to use instead.
-        Leave blank for devices that support normal off mode.
+        For these devices, we set a low temperature instead of turning them off.
         """
         if user_input is not None:
             # Process user input - build device_off_temperatures dict
+            selected_devices = user_input.get("devices_needing_off_temp", [])
+            off_temp = user_input.get("off_temperature", DEFAULT_OFF_TEMPERATURE)
+
             self._device_off_temperatures = {}
-            for entity_id in self._selected_climate_entities:
-                # Create a safe key from entity_id
-                safe_key = entity_id.replace(".", "_")
-                temp_value = user_input.get(safe_key)
-                if temp_value is not None and temp_value > 0:
-                    self._device_off_temperatures[entity_id] = temp_value
+            for entity_id in selected_devices:
+                self._device_off_temperatures[entity_id] = off_temp
+
             return await self.async_step_manage_schedules()
 
-        # Build form with a temperature field for each selected device
-        schema_fields = {}
-        for entity_id in self._selected_climate_entities:
-            # Get friendly name from state if available
-            state = self.hass.states.get(entity_id)
-            friendly_name = (
-                state.attributes.get("friendly_name", entity_id)
-                if state
-                else entity_id
-            )
-            # Create a safe key from entity_id (periods not allowed in vol keys)
-            safe_key = entity_id.replace(".", "_")
-            # Get existing value if any
-            current_value = self._device_off_temperatures.get(entity_id)
-            schema_fields[vol.Optional(
-                safe_key,
-                default=current_value,
-                description={"suggested_value": current_value}
-            )] = selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=5.0,
-                    max=20.0,
-                    step=0.5,
-                    unit_of_measurement="°C",
-                    mode="box",
-                )
-            )
+        # Get currently configured devices that use off-temperature
+        current_off_temp_devices = list(self._device_off_temperatures.keys())
+        # Get the current off temperature (use first value or default)
+        current_off_temp = (
+            next(iter(self._device_off_temperatures.values()), None)
+            if self._device_off_temperatures
+            else DEFAULT_OFF_TEMPERATURE
+        )
 
-        data_schema = vol.Schema(schema_fields)
+        data_schema = vol.Schema(
+            {
+                vol.Optional(
+                    "devices_needing_off_temp",
+                    default=current_off_temp_devices,
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="climate",
+                        multiple=True,
+                        include_entities=self._selected_climate_entities,
+                    )
+                ),
+                vol.Optional(
+                    "off_temperature",
+                    default=current_off_temp,
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=5.0,
+                        max=20.0,
+                        step=0.5,
+                        unit_of_measurement="°C",
+                        mode="box",
+                    )
+                ),
+            }
+        )
 
         return self.async_show_form(
             step_id="configure_device_off_temps",
             data_schema=data_schema,
-            description_placeholders={
-                "device_count": str(len(self._selected_climate_entities)),
-            },
         )
 
     async def async_step_manage_schedules(

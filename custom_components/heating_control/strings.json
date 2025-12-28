@@ -76,8 +76,12 @@
         }
       },
       "configure_device_off_temps": {
-        "title": "Device Off Temperature Settings",
-        "description": "Some thermostats (like gas boilers) don't support turning off. For these devices, set a low temperature to use instead (e.g., 10°C). Leave empty for devices that support normal off mode.\n\nConfiguring {device_count} device(s):"
+        "title": "Devices Without Off Mode (Optional)",
+        "description": "Some thermostats (like gas boilers) cannot be turned off - they only support setting a temperature.\n\nIf any of your devices don't support off mode, select them below and set a low temperature to use instead of turning off.",
+        "data": {
+          "devices_needing_off_temp": "Devices that don't support off mode",
+          "off_temperature": "Temperature to use instead of off"
+        }
       },
       "manage_schedules": {
         "title": "Manage Schedules",
