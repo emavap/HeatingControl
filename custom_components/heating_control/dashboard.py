@@ -182,7 +182,6 @@ class HeatingControlDashboardStrategy(Strategy):
     ) -> Dict[str, Any]:
         """Build a grid of status buttons for at-a-glance system state."""
         diagnostics = getattr(snapshot, "diagnostics", None) if snapshot else None
-        anyone_home = getattr(snapshot, "anyone_home", True) if snapshot else True
 
         active_schedules = 0
         total_schedules = 0
@@ -220,12 +219,12 @@ class HeatingControlDashboardStrategy(Strategy):
                 "show_state": True,
                 "tap_action": {"action": "toggle"},
             },
-            # Presence button
+            # Presence button — entity state shows "Home" or "Away" via PRESENCE device class
             {
                 "type": "button",
                 "entity": ENTITY_EVERYONE_AWAY,
-                "name": "Home" if anyone_home else "Away",
-                "icon": "mdi:home-account" if anyone_home else "mdi:home-outline",
+                "name": "Presence",
+                "icon": "mdi:home-account",
                 "icon_height": "50px",
                 "show_name": True,
                 "show_state": True,

@@ -90,7 +90,12 @@ class HeatingControlBinarySensor(CoordinatorEntity, BinarySensorEntity):
 
 
 class EveryoneAwayBinarySensor(HeatingControlBinarySensor):
-    """Binary sensor that reports when everyone tracked is away."""
+    """Binary sensor that reports presence status.
+
+    Uses PRESENCE device class so Home Assistant displays:
+    - is_on=True  → "Home"  (at least one tracked person is home)
+    - is_on=False → "Away"  (everyone is away)
+    """
 
     def __init__(
         self, coordinator: HeatingControlCoordinator, entry: ConfigEntry
@@ -101,15 +106,15 @@ class EveryoneAwayBinarySensor(HeatingControlBinarySensor):
             entry,
             BINARY_SENSOR_EVERYONE_AWAY,
             "Everyone Away",
-            "mdi:home-export-outline",
+            "mdi:home-account",
         )
-        self._attr_device_class = BinarySensorDeviceClass.OCCUPANCY
+        self._attr_device_class = BinarySensorDeviceClass.PRESENCE
 
     @property
     def is_on(self) -> bool:
-        """Return true if everyone is away."""
+        """Return true if at least one tracked person is home."""
         snapshot = self.coordinator.data
-        return bool(snapshot and snapshot.everyone_away)
+        return bool(snapshot and snapshot.anyone_home)
 
 
 class ScheduleActiveBinarySensor(HeatingControlBinarySensor):
