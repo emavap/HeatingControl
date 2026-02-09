@@ -38,7 +38,7 @@ from .const import (
     DOMAIN,
     ENTITY_DECISION_DIAGNOSTICS,
     ENTITY_EVERYONE_AWAY,
-    MASTER_SWITCH_ENTITY_TEMPLATE,
+    MASTER_SWITCH_ENTITY_ID,
     SCHEDULE_SWITCH_ENTITY_TEMPLATE,
     STATUS_IDLE,
     STATUS_OFF,
@@ -212,7 +212,7 @@ class HeatingControlDashboardStrategy(Strategy):
             # Master on/off switch
             {
                 "type": "button",
-                "entity": MASTER_SWITCH_ENTITY_TEMPLATE.format(entry=slugify(entry_id[:8])),
+                "entity": MASTER_SWITCH_ENTITY_ID,
                 "name": "All Heating",
                 "icon": "mdi:power" if auto_heating_enabled else "mdi:power-off",
                 "icon_height": "50px",
