@@ -78,7 +78,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     # Version 1 -> 2: Remove old config and force reconfiguration
-    if entry.version == 1 or entry.version < CONFIG_VERSION:
+    if entry.version == 1:
         _LOGGER.warning(
             "Heating Control version 1 configuration is incompatible with version 2. "
             "The integration will be removed and must be reconfigured to enable device support."

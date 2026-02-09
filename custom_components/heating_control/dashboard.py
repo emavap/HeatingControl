@@ -277,10 +277,11 @@ class HeatingControlDashboardStrategy(Strategy):
             mode_label = "Cold" if is_cold else "Warm"
             mode_icon = "mdi:snowflake" if is_cold else "mdi:weather-sunny"
 
+            threshold_label = f"<{outdoor_temp_threshold:g}°" if is_cold else f"≥{outdoor_temp_threshold:g}°"
             buttons.insert(1, {
                 "type": "button",
                 "entity": outdoor_temp_sensor,
-                "name": f"{mode_label} (<{outdoor_temp_threshold:g}°)",
+                "name": f"{mode_label} ({threshold_label})",
                 "icon": mode_icon,
                 "icon_height": "50px",
                 "show_name": True,
