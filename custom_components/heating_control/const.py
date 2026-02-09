@@ -57,7 +57,8 @@ __all__ = [
     "WATCHDOG_STUCK_THRESHOLD",
     "TEMPERATURE_EPSILON",
     # Sensor types
-    "BINARY_SENSOR_EVERYONE_AWAY",
+    "BINARY_SENSOR_EVERYONE_AWAY",  # Deprecated: kept for migration
+    "BINARY_SENSOR_PRESENCE",
     "SENSOR_DECISION_DIAGNOSTICS",
     # Update interval
     "UPDATE_INTERVAL",
@@ -76,7 +77,8 @@ __all__ = [
     "DEVICE_SWITCH_ENTITY_TEMPLATE",
     "MASTER_SWITCH_ENTITY_ID",
     "ENTITY_DECISION_DIAGNOSTICS",
-    "ENTITY_EVERYONE_AWAY",
+    "ENTITY_EVERYONE_AWAY",  # Deprecated: kept for migration
+    "ENTITY_PRESENCE",
     # Dashboard
     "DASHBOARD_TITLE",
     "DASHBOARD_ICON",
@@ -195,7 +197,8 @@ WATCHDOG_STUCK_THRESHOLD = 180
 TEMPERATURE_EPSILON = 0.1
 
 # Sensor types
-BINARY_SENSOR_EVERYONE_AWAY = "everyone_away"
+BINARY_SENSOR_EVERYONE_AWAY = "everyone_away"  # Deprecated: kept for migration
+BINARY_SENSOR_PRESENCE = "presence"
 
 SENSOR_DECISION_DIAGNOSTICS = "decision_diagnostics"
 
@@ -223,7 +226,8 @@ DEVICE_SWITCH_ENTITY_TEMPLATE = "switch.heating_device_{entry}_{device}_enabled"
 MASTER_SWITCH_ENTITY_ID = "switch.heating_control_master"
 # Entity IDs
 ENTITY_DECISION_DIAGNOSTICS = "sensor.heating_control_decision_diagnostics"
-ENTITY_EVERYONE_AWAY = "binary_sensor.heating_control_everyone_away"
+ENTITY_EVERYONE_AWAY = "binary_sensor.heating_control_everyone_away"  # Deprecated: kept for migration
+ENTITY_PRESENCE = "binary_sensor.heating_control_presence"
 
 # Dashboard
 DASHBOARD_TITLE = "Smart Heating"

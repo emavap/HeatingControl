@@ -16,7 +16,7 @@ from homeassistant.util import slugify
 
 from .const import (
     DOMAIN,
-    BINARY_SENSOR_EVERYONE_AWAY,
+    BINARY_SENSOR_PRESENCE,
     SCHEDULE_BINARY_ENTITY_TEMPLATE,
     DEVICE_BINARY_ENTITY_TEMPLATE,
     CONF_CLIMATE_DEVICES,
@@ -32,7 +32,7 @@ async def async_setup_entry(
     """Set up the binary sensor platform."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities = [EveryoneAwayBinarySensor(coordinator, entry)]
+    entities = [PresenceBinarySensor(coordinator, entry)]
 
     # Add per-schedule binary sensors
     if coordinator.data:
@@ -89,7 +89,7 @@ class HeatingControlBinarySensor(CoordinatorEntity, BinarySensorEntity):
         )
 
 
-class EveryoneAwayBinarySensor(HeatingControlBinarySensor):
+class PresenceBinarySensor(HeatingControlBinarySensor):
     """Binary sensor that reports presence status.
 
     Uses PRESENCE device class so Home Assistant displays:
@@ -104,8 +104,8 @@ class EveryoneAwayBinarySensor(HeatingControlBinarySensor):
         super().__init__(
             coordinator,
             entry,
-            BINARY_SENSOR_EVERYONE_AWAY,
-            "Everyone Away",
+            BINARY_SENSOR_PRESENCE,
+            "Presence",
             "mdi:home-account",
         )
         self._attr_device_class = BinarySensorDeviceClass.PRESENCE

@@ -37,7 +37,7 @@ from .const import (
     DEVICE_SWITCH_ENTITY_TEMPLATE,
     DOMAIN,
     ENTITY_DECISION_DIAGNOSTICS,
-    ENTITY_EVERYONE_AWAY,
+    ENTITY_PRESENCE,
     MASTER_SWITCH_ENTITY_ID,
     SCHEDULE_SWITCH_ENTITY_TEMPLATE,
     STATUS_IDLE,
@@ -222,7 +222,7 @@ class HeatingControlDashboardStrategy(Strategy):
             # Presence button — entity state shows "Home" or "Away" via PRESENCE device class
             {
                 "type": "button",
-                "entity": ENTITY_EVERYONE_AWAY,
+                "entity": ENTITY_PRESENCE,
                 "name": "Presence",
                 "icon": "mdi:home-account",
                 "icon_height": "50px",

@@ -16,14 +16,20 @@ except ImportError:  # pragma: no cover - older HA cores
     StaticPathConfig = None  # type: ignore[assignment]
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers import (
+    config_validation as cv,
+    device_registry as dr,
+    entity_registry as er,
+)
 
 from .const import (
     ATTR_ENTRY_ID,
     ATTR_SCHEDULE_ID,
     ATTR_SCHEDULE_NAME,
+    BINARY_SENSOR_EVERYONE_AWAY,
+    BINARY_SENSOR_PRESENCE,
     CONF_SCHEDULE_ENABLED,
     DASHBOARD_CREATED_KEY,
     DASHBOARD_ENTRY_ID_LENGTH,
@@ -40,7 +46,7 @@ _LOGGER = logging.getLogger(__name__)
 
 # Config entry version for migrations
 CONFIG_VERSION = 2
-CONFIG_MINOR_VERSION = 1
+CONFIG_MINOR_VERSION = 2
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
 
@@ -79,6 +85,33 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         # Return False to remove the config entry
         return False
+
+    # Version 2.1 -> 2.2: Rename everyone_away entity to presence
+    if entry.version == 2 and entry.minor_version < 2:
+        _LOGGER.info(
+            "Migrating entity registry: renaming everyone_away -> presence"
+        )
+        old_unique_id = f"{entry.entry_id}_{BINARY_SENSOR_EVERYONE_AWAY}"
+        new_unique_id = f"{entry.entry_id}_{BINARY_SENSOR_PRESENCE}"
+
+        @callback
+        def _update_presence_entity(
+            entity_entry: er.RegistryEntry,
+        ) -> dict[str, str] | None:
+            """Rename the everyone_away entity to presence."""
+            if entity_entry.unique_id == old_unique_id:
+                return {
+                    "new_unique_id": new_unique_id,
+                    "new_entity_id": "binary_sensor.heating_control_presence",
+                }
+            return None
+
+        await er.async_migrate_entries(hass, entry.entry_id, _update_presence_entity)
+
+        hass.config_entries.async_update_entry(
+            entry, minor_version=CONFIG_MINOR_VERSION
+        )
+        _LOGGER.info("Migration to version 2.2 complete")
 
     return True
 
