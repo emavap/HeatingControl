@@ -94,6 +94,43 @@ class ClimateController:
             await self._apply_device(decision)
         return list(self._timed_out_devices)
 
+    async def _send_climate_command(
+        self,
+        entity_id: str,
+        service: str,
+        data: dict,
+        log_message: str,
+    ) -> bool:
+        """Send a climate service call with timeout handling.
+
+        Args:
+            entity_id: Climate entity ID for timeout tracking.
+            service: Climate service name (e.g., "set_hvac_mode").
+            data: Service call data dict.
+            log_message: Human-readable description for logging.
+
+        Returns:
+            True if the command succeeded, False if it timed out.
+        """
+        _LOGGER.info("%s", log_message)
+        try:
+            await asyncio.wait_for(
+                self._hass.services.async_call(
+                    "climate", service, data, blocking=True,
+                ),
+                timeout=SERVICE_CALL_TIMEOUT,
+            )
+            return True
+        except asyncio.TimeoutError:
+            _LOGGER.error(
+                "Timeout on %s for %s (timeout=%ds)",
+                service,
+                entity_id,
+                SERVICE_CALL_TIMEOUT,
+            )
+            self._timed_out_devices.add(entity_id)
+            return False
+
     async def _apply_device(self, decision: DeviceDecision) -> None:
         """Apply commands for a single climate device."""
         entity_id = decision.entity_id
@@ -168,155 +205,55 @@ class ClimateController:
         fan_succeeded = not fan_changed
 
         try:
-            if should_be_on:
-                if state_changed:
-                    _LOGGER.info("Setting %s HVAC mode to %s", entity_id, hvac_mode)
-                    try:
-                        await asyncio.wait_for(
-                            self._hass.services.async_call(
-                                "climate",
-                                "set_hvac_mode",
-                                {"entity_id": entity_id, "hvac_mode": hvac_mode},
-                                blocking=True,
-                            ),
-                            timeout=SERVICE_CALL_TIMEOUT,
-                        )
-                        hvac_mode_succeeded = True
-                        await asyncio.sleep(self._settle_seconds)
-                    except asyncio.TimeoutError:
-                        _LOGGER.error(
-                            "Timeout setting HVAC mode for %s (timeout=%ds), continuing with other settings",
-                            entity_id,
-                            SERVICE_CALL_TIMEOUT,
-                        )
-                        self._timed_out_devices.add(entity_id)
+            # --- HVAC mode ---
+            if state_changed:
+                if should_be_on:
+                    log_msg = f"Setting {entity_id} HVAC mode to {hvac_mode}"
+                elif use_off_temperature:
+                    log_msg = f"Setting {entity_id} to {effective_hvac_mode} mode for off-temperature control"
+                else:
+                    log_msg = f"Turning {entity_id} OFF"
 
-                if temp_changed:
-                    _LOGGER.info(
-                        "Setting %s temperature to %.2f°C", entity_id, target_temp
+                hvac_mode_succeeded = await self._send_climate_command(
+                    entity_id,
+                    "set_hvac_mode",
+                    {"entity_id": entity_id, "hvac_mode": effective_hvac_mode},
+                    log_msg,
+                )
+                if hvac_mode_succeeded:
+                    await asyncio.sleep(self._settle_seconds)
+
+            # --- Temperature ---
+            if temp_changed and (should_be_on or use_off_temperature):
+                if use_off_temperature:
+                    log_msg = (
+                        f"Setting {entity_id} off-temperature to {off_temperature:.1f}°C"
+                        f" (device doesn't support off mode)"
                     )
-                    try:
-                        await asyncio.wait_for(
-                            self._hass.services.async_call(
-                                "climate",
-                                "set_temperature",
-                                {"entity_id": entity_id, "temperature": target_temp},
-                                blocking=True,
-                            ),
-                            timeout=SERVICE_CALL_TIMEOUT,
-                        )
-                        temp_succeeded = True
-                    except asyncio.TimeoutError:
-                        _LOGGER.error(
-                            "Timeout setting temperature for %s (timeout=%ds), continuing with other settings",
-                            entity_id,
-                            SERVICE_CALL_TIMEOUT,
-                        )
-                        self._timed_out_devices.add(entity_id)
+                else:
+                    log_msg = f"Setting {entity_id} temperature to {target_temp:.2f}°C"
 
-                if fan_changed:
-                    fan_modes = state.attributes.get("fan_modes", [])
-                    if fan_modes and target_fan in fan_modes:
-                        _LOGGER.info("Setting %s fan mode to %s", entity_id, target_fan)
-                        try:
-                            await asyncio.wait_for(
-                                self._hass.services.async_call(
-                                    "climate",
-                                    "set_fan_mode",
-                                    {"entity_id": entity_id, "fan_mode": target_fan},
-                                    blocking=True,
-                                ),
-                                timeout=SERVICE_CALL_TIMEOUT,
-                            )
-                            fan_succeeded = True
-                        except asyncio.TimeoutError:
-                            _LOGGER.error(
-                                "Timeout setting fan mode for %s (timeout=%ds)",
-                                entity_id,
-                                SERVICE_CALL_TIMEOUT,
-                            )
-                            self._timed_out_devices.add(entity_id)
+                temp_succeeded = await self._send_climate_command(
+                    entity_id,
+                    "set_temperature",
+                    {"entity_id": entity_id, "temperature": effective_temp},
+                    log_msg,
+                )
 
-                if state_changed and hvac_mode_succeeded:
-                    await asyncio.sleep(self._final_settle)
-            elif use_off_temperature:
-                # Device doesn't support HVAC off mode - set low temperature instead
-                if state_changed:
-                    # Need to set HVAC mode first (e.g., ensure device is in heat mode)
-                    _LOGGER.info(
-                        "Setting %s to %s mode for off-temperature control",
+            # --- Fan mode ---
+            if fan_changed:
+                fan_modes = state.attributes.get("fan_modes", [])
+                if fan_modes and target_fan in fan_modes:
+                    fan_succeeded = await self._send_climate_command(
                         entity_id,
-                        effective_hvac_mode,
+                        "set_fan_mode",
+                        {"entity_id": entity_id, "fan_mode": target_fan},
+                        f"Setting {entity_id} fan mode to {target_fan}",
                     )
-                    try:
-                        await asyncio.wait_for(
-                            self._hass.services.async_call(
-                                "climate",
-                                "set_hvac_mode",
-                                {"entity_id": entity_id, "hvac_mode": effective_hvac_mode},
-                                blocking=True,
-                            ),
-                            timeout=SERVICE_CALL_TIMEOUT,
-                        )
-                        hvac_mode_succeeded = True
-                        await asyncio.sleep(self._settle_seconds)
-                    except asyncio.TimeoutError:
-                        _LOGGER.error(
-                            "Timeout setting HVAC mode for %s (timeout=%ds)",
-                            entity_id,
-                            SERVICE_CALL_TIMEOUT,
-                        )
-                        self._timed_out_devices.add(entity_id)
 
-                if temp_changed:
-                    _LOGGER.info(
-                        "Setting %s off-temperature to %.1f°C (device doesn't support off mode)",
-                        entity_id,
-                        off_temperature,
-                    )
-                    try:
-                        await asyncio.wait_for(
-                            self._hass.services.async_call(
-                                "climate",
-                                "set_temperature",
-                                {"entity_id": entity_id, "temperature": off_temperature},
-                                blocking=True,
-                            ),
-                            timeout=SERVICE_CALL_TIMEOUT,
-                        )
-                        temp_succeeded = True
-                    except asyncio.TimeoutError:
-                        _LOGGER.error(
-                            "Timeout setting off-temperature for %s (timeout=%ds)",
-                            entity_id,
-                            SERVICE_CALL_TIMEOUT,
-                        )
-                        self._timed_out_devices.add(entity_id)
-
-                if state_changed and hvac_mode_succeeded:
-                    await asyncio.sleep(self._final_settle)
-            else:
-                # Standard off mode - device supports HVAC off
-                if state_changed:
-                    _LOGGER.info("Turning %s OFF", entity_id)
-                    try:
-                        await asyncio.wait_for(
-                            self._hass.services.async_call(
-                                "climate",
-                                "set_hvac_mode",
-                                {"entity_id": entity_id, "hvac_mode": "off"},
-                                blocking=True,
-                            ),
-                            timeout=SERVICE_CALL_TIMEOUT,
-                        )
-                        hvac_mode_succeeded = True
-                    except asyncio.TimeoutError:
-                        _LOGGER.error(
-                            "Timeout turning off %s (timeout=%ds)",
-                            entity_id,
-                            SERVICE_CALL_TIMEOUT,
-                        )
-                        self._timed_out_devices.add(entity_id)
+            # --- Final settle after HVAC mode change ---
+            if state_changed and hvac_mode_succeeded:
+                await asyncio.sleep(self._final_settle)
 
             # Update command history and force refresh status
             # For off_temperature mode, track the effective values to detect changes correctly

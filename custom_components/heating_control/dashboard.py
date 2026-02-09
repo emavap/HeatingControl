@@ -38,6 +38,7 @@ from .const import (
     DOMAIN,
     ENTITY_DECISION_DIAGNOSTICS,
     ENTITY_EVERYONE_AWAY,
+    MASTER_SWITCH_ENTITY_TEMPLATE,
     SCHEDULE_SWITCH_ENTITY_TEMPLATE,
     STATUS_IDLE,
     STATUS_OFF,
@@ -123,7 +124,7 @@ class HeatingControlDashboardStrategy(Strategy):
             cards.append(self._build_header_card())
 
             # Quick status grid with buttons
-            cards.append(self._build_status_grid(snapshot, tracker_entities, coordinator))
+            cards.append(self._build_status_grid(entry_id, snapshot, tracker_entities, coordinator))
 
             # Climate controls section
             climate_cards = self._build_climate_grid(climate_entities)
@@ -177,7 +178,7 @@ class HeatingControlDashboardStrategy(Strategy):
         }
 
     def _build_status_grid(
-        self, snapshot: Optional["HeatingStateSnapshot"], tracker_entities: Sequence[str], coordinator=None
+        self, entry_id: str, snapshot: Optional["HeatingStateSnapshot"], tracker_entities: Sequence[str], coordinator=None
     ) -> Dict[str, Any]:
         """Build a grid of status buttons for at-a-glance system state."""
         diagnostics = getattr(snapshot, "diagnostics", None) if snapshot else None
@@ -211,7 +212,7 @@ class HeatingControlDashboardStrategy(Strategy):
             # Master on/off switch
             {
                 "type": "button",
-                "entity": "switch.heating_control_master",
+                "entity": MASTER_SWITCH_ENTITY_TEMPLATE.format(entry=slugify(entry_id[:8])),
                 "name": "All Heating",
                 "icon": "mdi:power" if auto_heating_enabled else "mdi:power-off",
                 "icon_height": "50px",
@@ -430,13 +431,13 @@ class HeatingControlDashboardStrategy(Strategy):
         if not snapshot or not snapshot.schedule_decisions:
             return None
 
-        # Build map of which devices are controlled by each schedule
+        # Build map of which devices are controlled by each schedule (keyed by schedule_id)
         schedule_to_devices: Dict[str, List[str]] = {}
         if snapshot.device_decisions:
             for device_entity, device_decision in snapshot.device_decisions.items():
                 if device_decision.active_schedules:
-                    for sched_name in device_decision.active_schedules:
-                        schedule_to_devices.setdefault(sched_name, []).append(
+                    for sched_id in device_decision.active_schedules:
+                        schedule_to_devices.setdefault(sched_id, []).append(
                             device_entity
                         )
 
@@ -444,7 +445,7 @@ class HeatingControlDashboardStrategy(Strategy):
 
         for decision in snapshot.schedule_decisions.values():
             switch_entity = self._schedule_switch_entity(entry_id, decision.schedule_id)
-            controlling_devices = schedule_to_devices.get(decision.name, [])
+            controlling_devices = schedule_to_devices.get(decision.schedule_id, [])
             controlling_count = len(controlling_devices)
 
             # Status text

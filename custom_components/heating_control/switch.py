@@ -32,6 +32,7 @@ from .const import (
     DEFAULT_SCHEDULE_HVAC_MODE,
     DEVICE_SWITCH_ENTITY_TEMPLATE,
     DOMAIN,
+    MASTER_SWITCH_ENTITY_TEMPLATE,
     SCHEDULE_SWITCH_ENTITY_TEMPLATE,
 )
 from .coordinator import HeatingControlCoordinator
@@ -472,7 +473,9 @@ class MasterEnableSwitch(BaseEnableSwitch):
         super().__init__(coordinator, entry)
 
         self._attr_unique_id = f"{entry.entry_id}_master_enabled"
-        self.entity_id = f"switch.heating_control_master"
+        self.entity_id = MASTER_SWITCH_ENTITY_TEMPLATE.format(
+            entry=slugify(entry.entry_id[:8]),
+        )
 
     @property
     def name(self) -> str:

@@ -103,11 +103,6 @@ def _parse_time_to_minutes(time_str: str, logger: logging.Logger) -> int:
             raise ValueError(f"Time out of range: {time_str}")
 
         total_minutes = hours * 60 + minutes
-
-        # Additional validation for edge cases
-        if total_minutes >= MINUTES_PER_DAY or total_minutes < 0:
-            raise ValueError(f"Time out of bounds: {total_minutes} minutes")
-
         return total_minutes
 
     except (ValueError, AttributeError) as err:
@@ -151,7 +146,8 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         self._last_update_start: Optional[float] = None
         self._last_update_complete: Optional[float] = None
         self._last_update_duration: Optional[float] = None
-        self._timed_out_devices: List[str] = []
+        self._timed_out_devices: set[str] = set()
+        self._update_cycle_timed_out: bool = False
 
         super().__init__(
             hass,
@@ -162,7 +158,12 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
     @property
     def config(self) -> Dict[str, Any]:
-        """Get current configuration (options or data)."""
+        """Get current configuration (options or data).
+
+        Uses ``options or data`` because an empty dict ``{}`` is falsy,
+        so when options has not been populated yet it correctly falls
+        through to ``data``.
+        """
         return self.config_entry.options or self.config_entry.data
 
     def refresh_controller_config(self) -> None:
@@ -234,7 +235,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             end_time = time.time()
             self._last_update_complete = end_time
             self._last_update_duration = end_time - start_time
-            self._timed_out_devices = ["update_cycle_timeout"]
+            self._update_cycle_timed_out = True
             raise UpdateFailed(
                 f"Heating control update exceeded {UPDATE_CYCLE_TIMEOUT}s watchdog timeout"
             ) from err
@@ -263,7 +264,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             timed_out_devices = await self._controller.async_apply(
                 snapshot.device_decisions.values()
             )
-            self._timed_out_devices = timed_out_devices
+            self._timed_out_devices = set(timed_out_devices)
 
             if timed_out_devices:
                 device_count = len(snapshot.device_decisions)
@@ -289,7 +290,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             _LOGGER.debug(
                 "No state transitions, skipping control application (preserving manual changes)"
             )
-            self._timed_out_devices = []
+            self._timed_out_devices = set()
 
         self._update_previous_states(snapshot)
 
@@ -468,7 +469,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             elif self._last_update_duration > UPDATE_CYCLE_TIMEOUT * 0.4:  # >20s
                 watchdog_status = "warning"
 
-        if self._timed_out_devices:
+        if self._timed_out_devices or self._update_cycle_timed_out:
             watchdog_status = "timeout"  # Timeout overrides all other statuses
 
         # Create enriched diagnostics
@@ -1123,7 +1124,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
 
             entries = device_builders.get(device_entity, [])
 
-            hvac_mode, target_temp, target_fan, schedule_name = self._select_device_targets(
+            hvac_mode, target_temp, target_fan, schedule_id = self._select_device_targets(
                 entries,
                 now_hm,
             )
@@ -1142,7 +1143,7 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             device_decisions[device_entity] = DeviceDecision(
                 entity_id=device_entity,
                 should_be_active=should_be_active,
-                active_schedules=(schedule_name,) if schedule_name else tuple(),
+                active_schedules=(schedule_id,) if schedule_id else tuple(),
                 hvac_mode=hvac_mode,
                 target_temp=target_temp,
                 target_fan=target_fan,
@@ -1196,10 +1197,9 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
         def entry_key(entry: Dict[str, Any]) -> Tuple[int, int]:
             age = entry.get("start_age")
             if age is None:
-                return (
-                    entry.get("start_minutes", 0),
-                    entry.get("order", 0),
-                )
+                # Fallback: treat start_minutes as age so the freshness
+                # semantics stay consistent (lower age → higher freshness).
+                age = entry.get("start_minutes", 0)
             freshness = MINUTES_PER_DAY - int(age)
             return (
                 freshness,
@@ -1222,9 +1222,9 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             )
 
         if mode in (None, "off"):
-            return mode, None, None, best.get("schedule_name")
+            return mode, None, None, best.get("schedule_id")
 
-        return mode, temperature, fan_mode, best.get("schedule_name")
+        return mode, temperature, fan_mode, best.get("schedule_id")
 
     async def async_set_schedule_enabled(
         self,
@@ -1297,7 +1297,12 @@ class HeatingControlCoordinator(DataUpdateCoordinator[HeatingStateSnapshot]):
             new_data[CONF_SCHEDULES] = new_schedules
             update_kwargs["data"] = new_data
 
-        # Increment counter to skip full reload - this is just a toggle change
+        # Increment counter to skip full reload - this is just a toggle change.
+        # Concurrent toggles are serialised by HA's single-threaded event loop,
+        # so there is no true race condition.  The counter (rather than a bool)
+        # handles rapid successive toggles: each toggle increments on entry and
+        # decrements when its background refresh completes, so the "in-progress"
+        # window is only closed once all pending refreshes finish.
         self._soft_update_count += 1
 
         # Update config entry (callback method; no await needed)

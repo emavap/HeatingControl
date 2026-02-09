@@ -74,6 +74,7 @@ __all__ = [
     "SCHEDULE_BINARY_ENTITY_TEMPLATE",
     "DEVICE_BINARY_ENTITY_TEMPLATE",
     "DEVICE_SWITCH_ENTITY_TEMPLATE",
+    "MASTER_SWITCH_ENTITY_TEMPLATE",
     "ENTITY_DECISION_DIAGNOSTICS",
     "ENTITY_EVERYONE_AWAY",
     # Dashboard
@@ -219,6 +220,7 @@ SCHEDULE_SWITCH_ENTITY_TEMPLATE = "switch.heating_schedule_{entry}_{schedule}_en
 SCHEDULE_BINARY_ENTITY_TEMPLATE = "binary_sensor.heating_schedule_{entry}_{schedule}_active"
 DEVICE_BINARY_ENTITY_TEMPLATE = "binary_sensor.heating_device_{entry}_{device}"
 DEVICE_SWITCH_ENTITY_TEMPLATE = "switch.heating_device_{entry}_{device}_enabled"
+MASTER_SWITCH_ENTITY_TEMPLATE = "switch.heating_control_{entry}_master"
 # Entity IDs
 ENTITY_DECISION_DIAGNOSTICS = "sensor.heating_control_decision_diagnostics"
 ENTITY_EVERYONE_AWAY = "binary_sensor.heating_control_everyone_away"

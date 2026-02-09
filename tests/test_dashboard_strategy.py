@@ -226,7 +226,7 @@ async def test_device_cards_precede_schedule_cards_in_diagnostics_section() -> N
     device_decision = DeviceDecision(
         entity_id="climate.living_room",
         should_be_active=True,
-        active_schedules=("Weekday AM",),
+        active_schedules=("weekday",),
         hvac_mode="heat",
         target_temp=21.0,
         target_fan=None,

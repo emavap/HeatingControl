@@ -10,6 +10,8 @@ from custom_components.heating_control.const import (
     CONF_AUTO_HEATING_ENABLED,
     CONF_CLIMATE_DEVICES,
     CONF_DEVICE_TRACKERS,
+    CONF_OUTDOOR_TEMP_SENSOR,
+    CONF_OUTDOOR_TEMP_THRESHOLD,
     CONF_SCHEDULES,
     CONF_SCHEDULE_DEVICES,
     CONF_SCHEDULE_DEVICE_TRACKERS,
@@ -22,12 +24,18 @@ from custom_components.heating_control.const import (
     CONF_SCHEDULE_NAME,
     CONF_SCHEDULE_ONLY_WHEN_HOME,
     CONF_SCHEDULE_START,
+    CONF_SCHEDULE_TEMP_CONDITION,
     CONF_SCHEDULE_TEMPERATURE,
     DEFAULT_FINAL_SETTLE,
+    DEFAULT_OUTDOOR_TEMP_HYSTERESIS,
+    DEFAULT_OUTDOOR_TEMP_THRESHOLD,
     DEFAULT_SCHEDULE_FAN_MODE,
     DEFAULT_SCHEDULE_HVAC_MODE,
     DEFAULT_SCHEDULE_TEMPERATURE,
     DEFAULT_SETTLE_SECONDS,
+    TEMP_CONDITION_ALWAYS,
+    TEMP_CONDITION_COLD,
+    TEMP_CONDITION_WARM,
 )
 from custom_components.heating_control.controller import ClimateController
 from custom_components.heating_control.coordinator import HeatingControlCoordinator
@@ -45,6 +53,7 @@ def make_coordinator(hass: DummyHass, config: dict) -> HeatingControlCoordinator
     )
     coordinator._previous_schedule_states = None
     coordinator._previous_presence_state = None
+    coordinator._previous_outdoor_temp_state = None
     coordinator._force_update = False
     return coordinator
 
@@ -1041,3 +1050,275 @@ def test_schedule_with_valid_per_schedule_trackers_not_home(monkeypatch, dummy_h
     # The schedule is active in the time window, but uses away settings
     assert morning_decision.is_active is True  # Active in time window
     assert morning_decision.hvac_mode == "off"  # But uses away/off mode since nobody home
+
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Outdoor temperature condition tests
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _outdoor_config(schedules, *, sensor="sensor.outdoor_temp", threshold=5.0):
+    """Return a config dict with outdoor temperature sensor and given schedules."""
+    return {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_CLIMATE_DEVICES: ["climate.bedroom"],
+        CONF_DEVICE_TRACKERS: [],
+        CONF_OUTDOOR_TEMP_SENSOR: sensor,
+        CONF_OUTDOOR_TEMP_THRESHOLD: threshold,
+        CONF_SCHEDULES: schedules,
+    }
+
+
+def test_cold_schedule_active_when_outdoor_temp_below_threshold(monkeypatch, dummy_hass):
+    """Cold schedule should be active when outdoor temp < threshold."""
+    freeze_time(monkeypatch, 8, 0)
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("3.0", {}))
+
+    schedule = base_schedule("Cold Morning", "07:00", "10:00", only_when_home=False,
+                             devices=["climate.bedroom"])
+    schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_COLD
+
+    coordinator = make_coordinator(dummy_hass, _outdoor_config([schedule]))
+    result = coordinator._calculate_heating_state()
+
+    decision = result.schedule_decisions["Cold Morning"]
+    assert decision.temp_condition == TEMP_CONDITION_COLD
+    assert decision.temp_condition_met is True
+    assert decision.is_active is True
+    assert result.diagnostics.outdoor_temp == 3.0
+    assert result.diagnostics.outdoor_temp_state == "cold"
+
+
+def test_cold_schedule_inactive_when_outdoor_temp_above_threshold(monkeypatch, dummy_hass):
+    """Cold schedule should be inactive when outdoor temp >= threshold."""
+    freeze_time(monkeypatch, 8, 0)
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("7.0", {}))
+
+    schedule = base_schedule("Cold Morning", "07:00", "10:00", only_when_home=False,
+                             devices=["climate.bedroom"])
+    schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_COLD
+
+    coordinator = make_coordinator(dummy_hass, _outdoor_config([schedule]))
+    result = coordinator._calculate_heating_state()
+
+    decision = result.schedule_decisions["Cold Morning"]
+    assert decision.temp_condition_met is False
+    assert decision.is_active is False
+    assert result.diagnostics.outdoor_temp_state == "warm"
+
+
+def test_warm_schedule_active_when_outdoor_temp_above_threshold(monkeypatch, dummy_hass):
+    """Warm schedule should be active when outdoor temp >= threshold."""
+    freeze_time(monkeypatch, 8, 0)
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("10.0", {}))
+
+    schedule = base_schedule("Cooling", "07:00", "10:00", only_when_home=False,
+                             devices=["climate.bedroom"], hvac_mode="cool")
+    schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_WARM
+
+    coordinator = make_coordinator(dummy_hass, _outdoor_config([schedule]))
+    result = coordinator._calculate_heating_state()
+
+    decision = result.schedule_decisions["Cooling"]
+    assert decision.temp_condition == TEMP_CONDITION_WARM
+    assert decision.temp_condition_met is True
+    assert decision.is_active is True
+
+
+def test_warm_schedule_inactive_when_outdoor_temp_below_threshold(monkeypatch, dummy_hass):
+    """Warm schedule should be inactive when outdoor temp < threshold."""
+    freeze_time(monkeypatch, 8, 0)
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("2.0", {}))
+
+    schedule = base_schedule("Cooling", "07:00", "10:00", only_when_home=False,
+                             devices=["climate.bedroom"], hvac_mode="cool")
+    schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_WARM
+
+    coordinator = make_coordinator(dummy_hass, _outdoor_config([schedule]))
+    result = coordinator._calculate_heating_state()
+
+    decision = result.schedule_decisions["Cooling"]
+    assert decision.temp_condition_met is False
+    assert decision.is_active is False
+
+
+def test_always_schedule_active_regardless_of_outdoor_temp(monkeypatch, dummy_hass):
+    """Always schedule should be active regardless of outdoor temperature."""
+    freeze_time(monkeypatch, 8, 0)
+
+    schedule = base_schedule("AllWeather", "07:00", "10:00", only_when_home=False,
+                             devices=["climate.bedroom"])
+    schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_ALWAYS
+
+    # Active when cold
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("2.0", {}))
+    coordinator = make_coordinator(dummy_hass, _outdoor_config([schedule]))
+    result = coordinator._calculate_heating_state()
+    assert result.schedule_decisions["AllWeather"].temp_condition_met is True
+    assert result.schedule_decisions["AllWeather"].is_active is True
+
+    # Active when warm
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("20.0", {}))
+    coordinator2 = make_coordinator(dummy_hass, _outdoor_config([schedule]))
+    result2 = coordinator2._calculate_heating_state()
+    assert result2.schedule_decisions["AllWeather"].temp_condition_met is True
+    assert result2.schedule_decisions["AllWeather"].is_active is True
+
+
+def test_schmitt_trigger_hysteresis_cold_to_warm(monkeypatch, dummy_hass):
+    """Cold→warm transition requires temp >= threshold + hysteresis (6°C)."""
+    freeze_time(monkeypatch, 8, 0)
+
+    schedule = base_schedule("Cold Sched", "07:00", "10:00", only_when_home=False,
+                             devices=["climate.bedroom"])
+    schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_COLD
+
+    config = _outdoor_config([schedule], threshold=5.0)
+
+    # Start in cold state (temp=3°C)
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("3.0", {}))
+    coordinator = make_coordinator(dummy_hass, config)
+    result1 = coordinator._calculate_heating_state()
+    assert result1.diagnostics.outdoor_temp_state == "cold"
+
+    # Simulate saving previous state (as coordinator does between cycles)
+    coordinator._previous_outdoor_temp_state = "cold"
+
+    # Temp rises to 5.5°C — still below threshold + hysteresis (6°C), should stay cold
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("5.5", {}))
+    result2 = coordinator._calculate_heating_state()
+    assert result2.diagnostics.outdoor_temp_state == "cold"
+    assert result2.schedule_decisions["Cold Sched"].temp_condition_met is True
+
+    # Temp rises to 6.0°C — now at threshold + hysteresis, should switch to warm
+    coordinator._previous_outdoor_temp_state = "cold"
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("6.0", {}))
+    result3 = coordinator._calculate_heating_state()
+    assert result3.diagnostics.outdoor_temp_state == "warm"
+    assert result3.schedule_decisions["Cold Sched"].temp_condition_met is False
+
+
+def test_schmitt_trigger_hysteresis_warm_to_cold(monkeypatch, dummy_hass):
+    """Warm→cold transition requires temp < threshold (5°C), no hysteresis needed."""
+    freeze_time(monkeypatch, 8, 0)
+
+    schedule = base_schedule("Warm Sched", "07:00", "10:00", only_when_home=False,
+                             devices=["climate.bedroom"], hvac_mode="cool")
+    schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_WARM
+
+    config = _outdoor_config([schedule], threshold=5.0)
+
+    # Start in warm state (temp=7°C)
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("7.0", {}))
+    coordinator = make_coordinator(dummy_hass, config)
+    result1 = coordinator._calculate_heating_state()
+    assert result1.diagnostics.outdoor_temp_state == "warm"
+
+    # Simulate saving previous state
+    coordinator._previous_outdoor_temp_state = "warm"
+
+    # Temp drops to 5.0°C — at threshold, still warm (needs < threshold)
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("5.0", {}))
+    result2 = coordinator._calculate_heating_state()
+    assert result2.diagnostics.outdoor_temp_state == "warm"
+    assert result2.schedule_decisions["Warm Sched"].temp_condition_met is True
+
+    # Temp drops to 4.9°C — below threshold, switches to cold
+    coordinator._previous_outdoor_temp_state = "warm"
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("4.9", {}))
+    result3 = coordinator._calculate_heating_state()
+    assert result3.diagnostics.outdoor_temp_state == "cold"
+    assert result3.schedule_decisions["Warm Sched"].temp_condition_met is False
+
+
+def test_sensor_unavailable_defaults_to_warm(monkeypatch, dummy_hass):
+    """When outdoor sensor is unavailable, default to 'warm' state."""
+    freeze_time(monkeypatch, 8, 0)
+    # Set sensor to unavailable state
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("unavailable", {}))
+
+    cold_schedule = base_schedule("Heat", "07:00", "10:00", only_when_home=False,
+                                  devices=["climate.bedroom"])
+    cold_schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_COLD
+
+    warm_schedule = base_schedule("Cool", "07:00", "10:00", only_when_home=False,
+                                  devices=["climate.bedroom"], hvac_mode="cool")
+    warm_schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_WARM
+
+    coordinator = make_coordinator(dummy_hass, _outdoor_config([cold_schedule, warm_schedule]))
+    result = coordinator._calculate_heating_state()
+
+    assert result.diagnostics.outdoor_temp is None
+    assert result.diagnostics.outdoor_temp_state == "warm"
+    # Cold schedule should be inactive (warm default)
+    assert result.schedule_decisions["Heat"].temp_condition_met is False
+    # Warm schedule should be active (warm default)
+    assert result.schedule_decisions["Cool"].temp_condition_met is True
+
+
+def test_no_sensor_configured_defaults_to_warm(monkeypatch, dummy_hass):
+    """When no outdoor sensor is configured, default to 'warm' state."""
+    freeze_time(monkeypatch, 8, 0)
+
+    cold_schedule = base_schedule("Heat", "07:00", "10:00", only_when_home=False,
+                                  devices=["climate.bedroom"])
+    cold_schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_COLD
+
+    config = {
+        CONF_AUTO_HEATING_ENABLED: True,
+        CONF_CLIMATE_DEVICES: ["climate.bedroom"],
+        CONF_DEVICE_TRACKERS: [],
+        # No CONF_OUTDOOR_TEMP_SENSOR
+        CONF_SCHEDULES: [cold_schedule],
+    }
+
+    coordinator = make_coordinator(dummy_hass, config)
+    result = coordinator._calculate_heating_state()
+
+    assert result.diagnostics.outdoor_temp is None
+    assert result.diagnostics.outdoor_temp_state == "warm"
+    assert result.schedule_decisions["Heat"].temp_condition_met is False
+    assert result.schedule_decisions["Heat"].is_active is False
+
+
+def test_sensor_invalid_value_defaults_to_warm(monkeypatch, dummy_hass):
+    """When outdoor sensor has non-numeric value, default to 'warm' state."""
+    freeze_time(monkeypatch, 8, 0)
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("not_a_number", {}))
+
+    schedule = base_schedule("Heat", "07:00", "10:00", only_when_home=False,
+                             devices=["climate.bedroom"])
+    schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_COLD
+
+    coordinator = make_coordinator(dummy_hass, _outdoor_config([schedule]))
+    result = coordinator._calculate_heating_state()
+
+    assert result.diagnostics.outdoor_temp is None
+    assert result.diagnostics.outdoor_temp_state == "warm"
+    assert result.schedule_decisions["Heat"].temp_condition_met is False
+
+
+def test_mixed_temp_conditions_same_time_window(monkeypatch, dummy_hass):
+    """Cold and warm schedules in the same time window, only the right one activates."""
+    freeze_time(monkeypatch, 8, 0)
+    dummy_hass.states.set("sensor.outdoor_temp", DummyState("3.0", {}))
+
+    cold_schedule = base_schedule("Heating", "07:00", "10:00", only_when_home=False,
+                                  devices=["climate.bedroom"])
+    cold_schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_COLD
+
+    warm_schedule = base_schedule("Cooling", "07:00", "10:00", only_when_home=False,
+                                  devices=["climate.bedroom"], hvac_mode="cool")
+    warm_schedule[CONF_SCHEDULE_TEMP_CONDITION] = TEMP_CONDITION_WARM
+
+    coordinator = make_coordinator(dummy_hass, _outdoor_config([cold_schedule, warm_schedule]))
+    result = coordinator._calculate_heating_state()
+
+    assert result.schedule_decisions["Heating"].is_active is True
+    assert result.schedule_decisions["Cooling"].is_active is False
+
+    # Device should follow the cold (heating) schedule since it's the only active one
+    device = result.device_decisions["climate.bedroom"]
+    assert device.should_be_active is True
+    assert device.hvac_mode == "heat"
